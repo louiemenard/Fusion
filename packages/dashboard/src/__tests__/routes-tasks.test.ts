@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { UNATTRIBUTED_CONTEXT_MATCHER } from "./mutation-context-matchers.js";
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import express from "express";
 import http from "node:http";
@@ -736,6 +737,7 @@ describe("POST /tasks", () => {
     const [createInput, options] = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(createInput).toMatchObject({ description: "short request", summarize: false });
     expect(options.onSummarize).toEqual(expect.any(Function));
+    expect((store.createTask as ReturnType<typeof vi.fn>).mock.calls[0][2]).toEqual(UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("forwards no-workflow and explicit owner inputs but drops public exemption-shaped fields", async () => {
@@ -901,6 +903,7 @@ describe("POST /tasks", () => {
     expect(createTask).toHaveBeenCalledWith(
       expect.objectContaining({ description: "Big initiative", nodeId: "node-target" }),
       expect.objectContaining({ settings: { autoSummarizeTitles: undefined } }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
     expect((storeWithCreate.getDistributedTaskIdAllocator as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
   });
@@ -966,6 +969,7 @@ describe("POST /tasks", () => {
         baseBranch: "main",
       }),
       expect.any(Object),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -999,6 +1003,7 @@ describe("POST /tasks", () => {
         baseBranch: "main",
       }),
       expect.any(Object),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1037,7 +1042,7 @@ describe("POST /tasks", () => {
     expect(res.status).toBe(201);
     expect(store.updateTask).toHaveBeenCalledWith("FN-5671", {
       branch: "fusion/fn-5671-branch-strategy-dropdown",
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(res.body.branch).toBe("fusion/fn-5671-branch-strategy-dropdown");
   });
 
@@ -1090,7 +1095,7 @@ describe("POST /tasks", () => {
     expect(store.setTaskBranchGroup).toHaveBeenCalledWith("FN-7001", "BG-001");
     expect(store.updateTask).toHaveBeenCalledWith("FN-7001", {
       branch: "feature/shared/shared-group-branch-task",
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(res.body.branch).toBe("feature/shared/shared-group-branch-task");
   });
 
@@ -1154,6 +1159,92 @@ describe("POST /tasks", () => {
     expect(store.createTask).not.toHaveBeenCalled();
   });
 
+  it("forwards model overrides when both provider and id are supplied", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      validatorModelProvider: "openai",
+      validatorModelId: "gpt-4o",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Use explicit models",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        validatorModelProvider: "openai",
+        validatorModelId: "gpt-4o",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: undefined,
+        description: "Use explicit models",
+        column: undefined,
+        dependencies: undefined,
+        breakIntoSubtasks: undefined,
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        validatorModelProvider: "openai",
+        validatorModelId: "gpt-4o",
+        summarize: false,
+      }),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: undefined },
+      }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
+    );
+  });
+
+  it("normalizes partial model overrides back to defaults", async () => {
+    const createdTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage",
+    };
+    (store.createTask as ReturnType<typeof vi.fn>).mockResolvedValue(createdTask);
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks",
+      JSON.stringify({
+        description: "Ignore partial model selection",
+        modelProvider: "anthropic",
+        validatorModelId: "gpt-4o",
+      }),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(201);
+    expect(store.createTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: undefined,
+        description: "Ignore partial model selection",
+        column: undefined,
+        dependencies: undefined,
+        breakIntoSubtasks: undefined,
+        modelProvider: undefined,
+        modelId: undefined,
+        validatorModelProvider: undefined,
+        validatorModelId: undefined,
+        summarize: false,
+      }),
+      expect.objectContaining({
+        settings: { autoSummarizeTitles: undefined },
+      }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
+    );
+  });
+
   it("returns 400 when model fields are not strings", async () => {
     const res = await REQUEST(
       buildApp(),
@@ -1199,6 +1290,7 @@ describe("POST /tasks", () => {
       expect.objectContaining({
         settings: { autoSummarizeTitles: undefined },
       }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1235,6 +1327,7 @@ describe("POST /tasks", () => {
     expect(store.createTask).toHaveBeenCalledWith(
       expect.objectContaining({ reviewLevel: 2 }),
       expect.any(Object),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1254,6 +1347,7 @@ describe("POST /tasks", () => {
     expect(store.createTask).toHaveBeenCalledWith(
       expect.objectContaining({ reviewLevel: 0 }),
       expect.any(Object),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1301,6 +1395,7 @@ describe("POST /tasks", () => {
     expect(store.createTask).toHaveBeenCalledWith(
       expect.objectContaining({ autoMerge: true }),
       expect.any(Object),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1358,6 +1453,7 @@ describe("POST /tasks", () => {
         priority: "high",
       }),
       expect.any(Object),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1404,6 +1500,7 @@ describe("POST /tasks", () => {
         executionMode: "fast",
       }),
       expect.any(Object),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1433,6 +1530,7 @@ describe("POST /tasks", () => {
         executionMode: "standard",
       }),
       expect.any(Object),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1484,6 +1582,7 @@ describe("POST /tasks", () => {
       expect.objectContaining({
         settings: { autoSummarizeTitles: undefined },
       }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1519,6 +1618,7 @@ describe("POST /tasks", () => {
         settings: { autoSummarizeTitles: true },
         onSummarize: expect.any(Function),
       }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1553,6 +1653,7 @@ describe("POST /tasks", () => {
         settings: { autoSummarizeTitles: false },
         onSummarize: undefined,
       }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1587,6 +1688,7 @@ describe("POST /tasks", () => {
         settings: { autoSummarizeTitles: false },
         onSummarize: expect.any(Function),
       }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1615,6 +1717,7 @@ describe("POST /tasks", () => {
         summarize: true,
       }),
       expect.any(Object),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1659,6 +1762,7 @@ describe("POST /tasks", () => {
         settings: { autoSummarizeTitles: true },
         onSummarize: expect.any(Function),
       }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1694,6 +1798,7 @@ describe("POST /tasks", () => {
         settings: { autoSummarizeTitles: true },
         onSummarize: expect.any(Function),
       }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1728,6 +1833,7 @@ describe("POST /tasks", () => {
         settings: { autoSummarizeTitles: true },
         onSummarize: expect.any(Function),
       }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1762,6 +1868,7 @@ describe("POST /tasks", () => {
         settings: { autoSummarizeTitles: true },
         onSummarize: expect.any(Function),
       }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 
@@ -1797,6 +1904,7 @@ describe("POST /tasks", () => {
         settings: { autoSummarizeTitles: true },
         onSummarize: expect.any(Function),
       }),
+      UNATTRIBUTED_CONTEXT_MATCHER,
     );
   });
 });
@@ -1834,7 +1942,7 @@ describe("PATCH /tasks/:id branch fields", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
       branch: "fusion/fn-123",
       baseBranch: "main",
-    }));
+    }), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("treats empty-string patch values as clears (null)", async () => {
@@ -1856,7 +1964,7 @@ describe("PATCH /tasks/:id branch fields", () => {
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({
       branch: null,
       baseBranch: null,
-    }));
+    }), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("rejects client-supplied autoMerge provenance while preserving server-owned task updates", async () => {
@@ -1889,7 +1997,7 @@ describe("PATCH /tasks/:id branch fields", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({ autoMerge: null }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", expect.objectContaining({ autoMerge: null }), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("returns 400 for invalid branch payload types", async () => {
@@ -2179,7 +2287,7 @@ describe("POST /tasks/:id/review/address", () => {
       reviewState: expect.objectContaining({
         addressing: [expect.objectContaining({ itemId, snapshot: expect.objectContaining({ body: "Use the authoritative persisted feedback." }) })],
       }),
-    }));
+    }), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it.each([
@@ -2258,9 +2366,9 @@ describe("POST /tasks/:id/review/address", () => {
         items: [expect.objectContaining({ id: reviewerBlockItemId, source: "reviewer-agent" })],
         addressing: [expect.objectContaining({ itemId: reviewerBlockItemId, status: "queued" })],
       }),
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.addSteeringComment).toHaveBeenCalledWith("FN-001", expect.stringContaining("Fix tests before merge."), "user");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", { preserveProgress: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", { preserveProgress: true }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.updateStep).toHaveBeenCalledWith("FN-001", 0, "pending");
   });
 
@@ -2318,12 +2426,12 @@ describe("POST /tasks/:id/review/address", () => {
           }),
         })],
       }),
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
     const steering = (store.addSteeringComment as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
     expect(steering).toContain("Canonical advisory: preserve this text.");
     expect(steering).not.toContain("FORGED");
     expect(steering).not.toContain("invalid.example");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-009", "in-progress", { preserveProgress: true });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-009", "in-progress", { preserveProgress: true }, UNATTRIBUTED_CONTEXT_MATCHER);
   });
 
   it("accepts reviewer-agent fallback log review ids when no reviewer text block exists", async () => {
@@ -2347,7 +2455,7 @@ describe("POST /tasks/:id/review/address", () => {
         items: [expect.objectContaining({ id: fallbackItemId })],
         addressing: [expect.objectContaining({ itemId: fallbackItemId })],
       }),
-    });
+    }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
@@ -2503,10 +2611,10 @@ describe("POST /tasks/:id/pr/address-feedback", () => {
       "user",
     );
     expect(store.addSteeringComment).toHaveBeenCalledWith("FN-001", expect.stringContaining("PR #42 https://github.com/acme/repo/pull/42"), "user");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null, sessionFile: null });
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null, sessionFile: null }, UNATTRIBUTED_CONTEXT_MATCHER);
     expect(store.updateStep).toHaveBeenCalledWith("FN-001", 0, "pending");
-    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", { preserveProgress: true });
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Address PR feedback requested", expect.stringContaining("PR #42"));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", { preserveProgress: true }, UNATTRIBUTED_CONTEXT_MATCHER);
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Address PR feedback requested", expect.stringContaining("PR #42"), UNATTRIBUTED_CONTEXT_MATCHER);
     expect(res.body.task.column).toBe("in-progress");
   });
 
@@ -2582,6 +2690,6 @@ describe("POST /tasks/:id/pr/address-feedback", () => {
     expect(res.status).toBe(200);
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.addSteeringComment).toHaveBeenCalledWith("FN-001", expect.stringContaining("ce-resolve-pr-feedback"), "user");
-    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Address PR feedback requested", expect.stringContaining("ce-resolve-pr-feedback"));
+    expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Address PR feedback requested", expect.stringContaining("ce-resolve-pr-feedback"), UNATTRIBUTED_CONTEXT_MATCHER);
   });
 });
