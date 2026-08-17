@@ -26,6 +26,11 @@ import {
 } from "./executor-constants.js";
 
 export type BranchConflictHandleDepsSource = {
+  /**
+   * FNXC:Identity 2026-08-16-05:10: the U18 total run carrier. Required by the built Deps type;
+   * the source must declare it or the projection cannot pass it through.
+   */
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   rootDir: string;
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
@@ -42,6 +47,7 @@ export function buildBranchConflictHandleDeps(src: BranchConflictHandleDepsSourc
     rootDir: src.rootDir,
     store: src.store,
     getRunContextFor: src.getRunContextFor,
+    runContextFor: src.runContextFor,
     findActiveWorktreeOwner: src.findActiveWorktreeOwner,
     normalizeReclaimableWorktreePath: src.normalizeReclaimableWorktreePath,
     cleanupConflictingWorktree: src.cleanupConflictingWorktree,
@@ -87,6 +93,11 @@ export function buildWorktreeCreateConflictDeps(src: WorktreeCreateConflictDepsS
 }
 
 export type WorktreeInvariantDepsSource = {
+  /**
+   * FNXC:Identity 2026-08-16-05:10: the U18 total run carrier. Required by the built Deps type;
+   * the source must declare it or the projection cannot pass it through.
+   */
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   rootDir: string;
   store: TaskStore;
   workspaceConfig: unknown | null | undefined;
@@ -103,6 +114,7 @@ export function buildWorktreeInvariantDeps(src: WorktreeInvariantDepsSource): Wo
     ensureWorkspaceConfig: src.ensureWorkspaceConfig,
     getActiveWorktreePaths: src.getActiveWorktreePaths,
     getRunContextFor: src.getRunContextFor,
+    runContextFor: src.runContextFor,
     emitWorktreeReanchoredAudit: src.emitWorktreeReanchoredAudit,
   };
   // FNXC:Workspace 2026-08-14-21:06: Workspace mode must remain live through every bag re-projection; a getter/setter preserves host writes in strict-mode callers.
@@ -115,6 +127,7 @@ export function buildNonContinuableSessionDeps(src: NonContinuableSessionDepsSou
   return {
     store: src.store,
     getRunContextFor: src.getRunContextFor,
+    runContextFor: src.runContextFor,
     resolveResumeLanes: src.resolveResumeLanes,
     persistTokenUsage: src.persistTokenUsage,
     clearCompletedTaskWatchdog: src.clearCompletedTaskWatchdog,
@@ -148,7 +161,7 @@ export function buildExecuteWorkflowGraphDeps(host: any): any {
       "workflowGateActivityPrincipals",
     ]),
     ...facadeMethods(host, [
-      "getRunContextFor", "advanceNoMergeWorkflowToCompleteColumn", "applyGraphRethinkReset",
+      "getRunContextFor", "runContextFor", "advanceNoMergeWorkflowToCompleteColumn", "applyGraphRethinkReset",
       "buildBranchPersistence", "buildCodeNodeRunner", "buildColumnBoundaryHooks", "buildForeachWorktreeDeps",
       "buildParseStepsDeps", "buildStepInstancePersistence", "createAuthoritativeWorkflowPrimitives",
       "createAuthoritativeWorkflowSeams", "finalizeMergeConfirmedWorkflowGraphTask", "handleGraphFailure",
@@ -175,7 +188,7 @@ export function buildHandleGraphFailureDeps(host: any): any {
       "activeWorkflowStepSessions", "activeCliTaskSessions", "activeWorkflowGraphAbortControllers",
     ]),
     ...facadeMethods(host, [
-      "getRunContextFor", "clearCompletedTaskWatchdog", "clearPausedAborted", "execute",
+      "getRunContextFor", "runContextFor", "clearCompletedTaskWatchdog", "clearPausedAborted", "execute",
       "finalizeMergeConfirmedWorkflowGraphTask", "getTaskCompletionBlocker",
       "handleStaleInReviewParsePauseAbortReplay", "handleStaleInReviewPlanPauseAbortReplay",
       "handoffTaskToReview", "hasLiveTaskSessionSurface", "hasTrailingConsecutiveToolFailures",
@@ -277,7 +290,7 @@ export function buildRunImplementationDeps(
       "graphStepSessionPinned", "outerConcurrencyClaims",
     ]),
     ...facadeMethods(host, [
-      "getRunContextFor", "persistTokenUsage", "markGraphExecuteSelfRequeued", "clearPausedAborted",
+      "getRunContextFor", "runContextFor", "persistTokenUsage", "markGraphExecuteSelfRequeued", "clearPausedAborted",
       "deleteActiveSession", "hasActiveWorktreeBinding", "persistTaskTokenUsage",
       "handleDepAbortCleanup", "parkApprovalSuspension", "scheduleCompletedTaskWatchdog",
       "shouldDeferCompletionForGlobalPause", "clearCompletedTaskWatchdog", "resolveResumeLanes",
@@ -311,7 +324,7 @@ export function buildRunGraphCustomNodeDeps(host: any): any {
     options: host.options as { pluginRunner?: unknown; [k: string]: unknown },
     graphUnattendedRuns: host.graphUnattendedRuns,
     ...facadeMethods(host, [
-      "getRunContextFor",
+      "getRunContextFor", "runContextFor",
       "adoptColumnAgentForNode", "buildInjectedRuntimeEnv", "ensureGraphCustomNodeWorktree",
       "executeScriptWorkflowStep", "executeWorkflowStep", "pauseForCliApproval",
       "resolveWorkflowInputMarkerForGraphNode", "runAwaitInputNode", "runCliAgentNode",
@@ -333,7 +346,7 @@ export function buildCreateAuthoritativeWorkflowSeamsDeps(host: any): any {
       "mergeRequester",
     ]),
     ...facadeMethods(host, [
-      "getRunContextFor",
+      "getRunContextFor", "runContextFor",
       "persistTokenUsage", "runImplementationPhase", "handoffTaskToReview",
       "ensureWorkflowMergeBoundaryTask", "getWorkflowMergeImplementationProofFailure", "runProjectedGraphTaskStep",
       "updateStepGraph", "reviewWorkspacePerRepo", "registerSubagentSession",
@@ -351,7 +364,7 @@ export function buildCreateSpawnAgentToolDeps(host: any): any {
     getTotalSpawnedCount: () => host.totalSpawnedCount,
     setTotalSpawnedCount: (n: number) => { host.totalSpawnedCount = n; },
     ...facadeMethods(host, [
-      "createWorktree", "resolveInstructionsForRole", "getRunContextFor",
+      "createWorktree", "resolveInstructionsForRole", "getRunContextFor", "runContextFor",
       "resolveMcpServers", "runSpawnedChild",
     ]),
   };
@@ -365,7 +378,7 @@ export function buildExecuteWorkflowStepDeps(host: any): any {
     activePlanningWorkflowSessions: host.activePlanningWorkflowSessions,
     activeWorkflowStepSessions: host.activeWorkflowStepSessions,
     ...facadeMethods(host, [
-      "getRunContextFor",
+      "getRunContextFor", "runContextFor",
       "captureModifiedFiles", "createSpawnAgentTool",
       "deleteActiveWorkflowStepSession", "getAssignedAgentRuntimeConfig", "getAuthoritativeAssignedAgent",
       "readTaskArtifact", "resolveInstructionsForRole", "resolveMcpServers",
@@ -379,7 +392,7 @@ export function buildCreateTaskDoneToolDeps(host: any): any {
   return {
     ...facadeFields(host, ["store", "workflowLifecycleMovesInFlight"]),
     ...facadeMethods(host, [
-      "getRunContextFor", "persistTokenUsage", "getTaskCompletionBlocker", "evaluateTaskVerdictProviders",
+      "getRunContextFor", "runContextFor", "persistTokenUsage", "getTaskCompletionBlocker", "evaluateTaskVerdictProviders",
       "verifyWorktreeInvariants", "evaluateTaskDoneScopeLeak", "scheduleCompletedTaskWatchdog",
       "finalizeAcceptedNoOpCompletion",
     ]),
@@ -393,7 +406,7 @@ Plan Review CLOSE_NO_OP terminalization deps (FN-8841) — shared by complete/ho
 export function buildFinalizeAcceptedNoOpCompletionDeps(host: any): any {
   return {
     ...facadeFields(host, ["store"]),
-    ...facadeMethods(host, ["getRunContextFor", "scheduleCompletedTaskWatchdog"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "scheduleCompletedTaskWatchdog"]),
   };
 }
 
@@ -447,7 +460,7 @@ export function buildExecuteScriptWorkflowStepDeps(host: any, runConfiguredComma
   return {
     ...facadeFields(host, ["store"]),
     ...facadeMethods(host, [
-      "getRunContextFor", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
+      "getRunContextFor", "runContextFor", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
     ]),
     runConfiguredCommand,
   };
@@ -461,7 +474,7 @@ export function buildEnsureGraphCustomNodeWorktreeDeps(host: any, runConfiguredC
     getWorkspaceConfig: () => host.workspaceConfig,
     setWorkspaceConfig: (c: unknown) => { host.workspaceConfig = c; },
     ...facadeMethods(host, [
-      "getRunContextFor", "addActiveWorktree", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
+      "getRunContextFor", "runContextFor", "addActiveWorktree", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
     ]),
     pool: host.options.pool,
     secretsStore: host.options.secretsStore,
@@ -495,7 +508,7 @@ export function buildRunRawCliCommandDeps(host: any, runConfiguredCommand: any =
   return {
     ...facadeFields(host, ["store"]),
     ...facadeMethods(host, [
-      "getRunContextFor", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
+      "getRunContextFor", "runContextFor", "registerConfiguredCommandController", "unregisterConfiguredCommandController",
     ]),
     runConfiguredCommand: (command: string, cwd: string, timeoutMs: number, extraEnv?: unknown, auditor?: unknown, signal?: unknown) =>
       runConfiguredCommand(command, cwd, timeoutMs, extraEnv, auditor, signal),
@@ -507,7 +520,7 @@ export function buildEvaluateTaskDoneScopeLeakDeps(host: any): any {
     ...facadeFields(host, ["store"]),
     ensureWorkspaceConfig: withWorkspaceResolver(host),
     ...facadeMethods(host, [
-      "getRunContextFor", "captureUncommittedModifiedFiles", "captureModifiedFiles",
+      "getRunContextFor", "runContextFor", "captureUncommittedModifiedFiles", "captureModifiedFiles",
     ]),
   };
   return defineLiveWorkspaceConfig(bag, host);
@@ -563,7 +576,7 @@ export function buildCreateAuthoritativeWorkflowPrimitivesFromExecutorDeps(host:
       "graphStepActiveContext", "pausedAborted", "mergeRequester",
     ]),
     ...facadeMethods(host, [
-      "getRunContextFor",
+      "getRunContextFor", "runContextFor",
       "buildParseStepsDeps", "createAuthoritativeWorkflowSeams", "ensureWorkflowMergeBoundaryTask",
       "getWorkflowMergeImplementationProofFailure", "handoffTaskToReview", "markPausedAborted",
       "persistTokenUsage", "runImplementationPhase", "runProjectedGraphTaskStep",
@@ -579,7 +592,7 @@ export function buildAttemptExecutorVerificationFixDeps(host: any): any {
     onAgentText: host.options.onAgentText,
     onAgentTool: host.options.onAgentTool,
     ...facadeMethods(host, [
-      "getRunContextFor", "getAssignedAgentRuntimeConfig", "resolveMcpServers",
+      "getRunContextFor", "runContextFor", "getAssignedAgentRuntimeConfig", "resolveMcpServers",
       "runExecutorDeterministicVerification",
     ]),
   };
@@ -606,7 +619,7 @@ export function buildHandleStaleInReviewParsePauseAbortReplayDeps(host: any): an
   return {
     store: host.store,
     ...facadeMethods(host, [
-      "getRunContextFor", "resolveResumeLanes", "isLiveSharedBranchGroupMember",
+      "getRunContextFor", "runContextFor", "resolveResumeLanes", "isLiveSharedBranchGroupMember",
       "clearPausedAborted", "persistTokenUsage", "executeWorkflowGraph",
     ]),
     ...facadeFields(host, [
@@ -625,7 +638,7 @@ export function buildReenterPausedAbortedWorkflowNodeDeps(host: any): any {
     ]),
     processWideGraphRouting: host.constructor.processWideGraphRouting as Set<string>,
     ...facadeMethods(host, [
-      "getRunContextFor", "resolveResumeLanes", "clearPausedAborted",
+      "getRunContextFor", "runContextFor", "resolveResumeLanes", "clearPausedAborted",
       "persistTokenUsage", "executeWorkflowGraph", "execute",
     ]),
   };
@@ -658,7 +671,7 @@ export function buildShouldDeferWorkflowStepCompletionDeps(host: any): any {
   return {
     ...facadeFields(host, ["store", "pausedAborted", "userCanceledTaskIds"]),
     ...facadeMethods(host, [
-      "getRunContextFor", "clearCompletedTaskWatchdog", "resolveResumeLanes",
+      "getRunContextFor", "runContextFor", "clearCompletedTaskWatchdog", "resolveResumeLanes",
       "shouldDeferCompletionForGlobalPause",
     ]),
   };
@@ -668,7 +681,7 @@ export function buildRequestPreMergeOptionalStepFixDeps(host: any): any {
   return {
     ...facadeFields(host, ["store", "workflowLifecycleMovesInFlight"]),
     ...facadeMethods(host, [
-      "getRunContextFor", "recoverMissingRequiredArtifacts", "parkPlanReviewReplanCapExhausted",
+      "getRunContextFor", "runContextFor", "recoverMissingRequiredArtifacts", "parkPlanReviewReplanCapExhausted",
       "clearPausedAborted", "sendTaskBackForFix",
     ]),
   };
@@ -727,7 +740,7 @@ export function buildHandleImplicitTaskDoneRefusalDeps(host: any): any {
   return {
     ...facadeFields(host, ["store"]),
     ...facadeMethods(host, [
-      "getRunContextFor", "markGraphExecuteSelfRequeued", "persistTokenUsage",
+      "getRunContextFor", "runContextFor", "markGraphExecuteSelfRequeued", "persistTokenUsage",
       "deleteActiveSession",
     ]),
     clearTokenUsageBaseline: (taskId: string) => { host.tokenUsageBaselines.delete(taskId); },
@@ -782,7 +795,7 @@ export function buildHandleStaleInReviewPlanPauseAbortReplayDeps(host: any): any
   return {
     store: host.store,
     ...facadeMethods(host, [
-      "getRunContextFor", "resolveResumeLanes", "isLiveSharedBranchGroupMember",
+      "getRunContextFor", "runContextFor", "resolveResumeLanes", "isLiveSharedBranchGroupMember",
       "clearPausedAborted", "persistTokenUsage",
     ]),
     activeWorktrees: host.activeWorktrees,
@@ -805,7 +818,7 @@ export function buildRouteRetryableRemediationGraphFailureToPreMergeFixDeps(host
   return {
     store: host.store,
     ...facadeMethods(host, [
-      "getRunContextFor", "isPreMergeRemediationGraphNode", "isLiveSharedBranchGroupMember",
+      "getRunContextFor", "runContextFor", "isPreMergeRemediationGraphNode", "isLiveSharedBranchGroupMember",
       "resolveFailedPreMergeWorkflowStepBudget", "recoverFailedPreMergeWorkflowStep", "persistTokenUsage",
     ]),
   };
@@ -815,7 +828,7 @@ export function buildRouteGraphFailureToExecutionResumeDeps(host: any): any {
   return {
     store: host.store,
     ...facadeMethods(host, [
-      "getRunContextFor", "resolveResumeLanes", "clearTerminalStepFailuresForRetry",
+      "getRunContextFor", "runContextFor", "resolveResumeLanes", "clearTerminalStepFailuresForRetry",
       "persistTokenUsage",
       // FNXC:WorkflowRemediation 2026-08-09-21:41: FN-8910 completed-review park for refused remediation.
       "isRemediationGraphNode",
@@ -862,7 +875,7 @@ export function buildResolveSeamColumnAgentDeps(host: any): any {
 export function buildReleasePreExecutionWorktreeDeps(host: any): any {
   return {
     ...facadeFields(host, ["store", "rootDir", "activeWorktrees"]),
-    ...facadeMethods(host, ["getRunContextFor", "hasLiveTaskSessionSurface"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "hasLiveTaskSessionSurface"]),
   };
 }
 
@@ -870,7 +883,7 @@ export function buildRouteUnusableWorktreeGraphFailureToRecoveryDeps(host: any):
   return {
     ...facadeFields(host, ["store", "pausedAborted"]),
     ...facadeMethods(host, [
-      "getRunContextFor", "resolveResumeLanes", "recoverMissingWorktreeSessionStartFailure",
+      "getRunContextFor", "runContextFor", "resolveResumeLanes", "recoverMissingWorktreeSessionStartFailure",
     ]),
   };
 }
@@ -888,7 +901,7 @@ export function buildRecoverMissingWorktreeSessionStartFailureDeps(host: any): a
   return {
     ...facadeFields(host, ["rootDir", "store"]),
     ...facadeMethods(host, [
-      "getRunContextFor", "hasActiveWorktreeBinding", "markGraphExecuteSelfRequeued",
+      "getRunContextFor", "runContextFor", "hasActiveWorktreeBinding", "markGraphExecuteSelfRequeued",
     ]),
   };
 }
@@ -914,7 +927,7 @@ export function buildRenewTaskLeaseDeps(host: any): any {
   return {
     ...facadeFields(host, ["store"]),
     options: host.options as { agentStore?: unknown; [k: string]: unknown },
-    ...facadeMethods(host, ["getRunContextFor"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor"]),
   };
 }
 
@@ -972,7 +985,7 @@ export function buildBlockOuterDispatchWhenEphemeralDisabledDeps(host: any): any
   return {
     ...facadeFields(host, ["store"]),
     agentStore: host.options.agentStore,
-    ...facadeMethods(host, ["getRunContextFor"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor"]),
   };
 }
 
@@ -1095,7 +1108,7 @@ export function buildTriggerPostTaskReflectionCaptureDeps(host: any): any {
 export function buildParkApprovalSuspensionDeps(host: any): any {
   return {
     ...facadeFields(host, ["store", "approvalSuspended"]),
-    ...facadeMethods(host, ["getRunContextFor", "clearPausedAborted"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "clearPausedAborted"]),
   };
 }
 
@@ -1109,7 +1122,7 @@ export function buildResumeApprovalAfterUnwindDeps(host: any): any {
 export function buildHandoffTaskToReviewDeps(host: any): any {
   return {
     ...facadeFields(host, ["store"]),
-    ...facadeMethods(host, ["getRunContextFor", "generateCompletionFeatureVideo"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "generateCompletionFeatureVideo"]),
   };
 }
 
@@ -1161,7 +1174,7 @@ export function buildPrepareGraphNodeExecutionDeps(host: any): any {
     workspaceConfigOwner: host,
     getWorkspaceConfig: () => host.workspaceConfig,
     setWorkspaceConfig: (cfg: unknown) => { host.workspaceConfig = cfg; },
-    ...facadeMethods(host, ["getRunContextFor", "ensureGraphCustomNodeWorktree"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "ensureGraphCustomNodeWorktree"]),
   };
 }
 
@@ -1216,14 +1229,14 @@ export function buildGetAuthoritativeAssignedAgentDeps(host: any): any {
 export function buildFinalizeMergeConfirmedWorkflowGraphTaskDeps(host: any): any {
   return {
     ...facadeFields(host, ["rootDir", "store"]),
-    ...facadeMethods(host, ["getRunContextFor"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor"]),
   };
 }
 
 export function buildShouldDeferCompletionForGlobalPauseDeps(host: any): any {
   return {
     ...facadeFields(host, ["store"]),
-    ...facadeMethods(host, ["getRunContextFor", "clearCompletedTaskWatchdog"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "clearCompletedTaskWatchdog"]),
   };
 }
 
@@ -1231,7 +1244,7 @@ export function buildNonContinuableSessionFacadeDeps(host: any): any {
   return buildNonContinuableSessionDeps({
     store: host.store,
     ...facadeMethods(host, [
-      "getRunContextFor", "resolveResumeLanes", "persistTokenUsage",
+      "getRunContextFor", "runContextFor", "resolveResumeLanes", "persistTokenUsage",
       "clearCompletedTaskWatchdog", "signalTaskComplete", "handoffTaskToReview",
       "markGraphExecuteSelfRequeued",
     ]),
@@ -1242,6 +1255,8 @@ export function buildColumnBoundaryHooksFacadeDeps(host: any): any {
   return {
     store: host.store,
     workflowLifecycleMovesInFlight: host.workflowLifecycleMovesInFlight,
+    getRunContextFor: (taskId: string) => host.getRunContextFor(taskId),
+    runContextFor: (taskId: string, fallback?: string | null) => host.runContextFor(taskId, fallback),
   };
 }
 
@@ -1277,7 +1292,7 @@ export function buildWorkflowMergeImplementationProofFailureDeps(host: any): any
 export function buildAdoptColumnAgentForNodeDeps(host: any): any {
   return {
     ...facadeFields(host, ["store"]),
-    ...facadeMethods(host, ["getRunContextFor"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor"]),
     agentStore: host.options.agentStore,
   };
 }
@@ -1287,7 +1302,7 @@ export function buildWorktreeInvariantFacadeDeps(host: any): any {
     ...facadeFields(host, ["rootDir", "store"]),
     ensureWorkspaceConfig: withWorkspaceResolver(host),
     ...facadeMethods(host, [
-      "getActiveWorktreePaths", "getRunContextFor", "emitWorktreeReanchoredAudit",
+      "getActiveWorktreePaths", "getRunContextFor", "runContextFor", "emitWorktreeReanchoredAudit",
     ]),
   };
   // FNXC:Workspace 2026-08-14-21:06: Object spread snapshots accessors, so the invariant's two-hop facade explicitly re-projects the live getter/setter.
@@ -1304,7 +1319,7 @@ export function buildHandleDepAbortCleanupDeps(host: any): any {
 export function buildTryBootstrapMisbindingRecoveryDeps(host: any): any {
   return {
     ...facadeFields(host, ["rootDir", "store"]),
-    ...facadeMethods(host, ["getRunContextFor", "markGraphExecuteSelfRequeued"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "markGraphExecuteSelfRequeued"]),
   };
 }
 
@@ -1314,7 +1329,7 @@ export function buildBranchConflictHandleFacadeDeps(host: any): any {
     store: host.store,
     onError: host.options.onError,
     ...facadeMethods(host, [
-      "getRunContextFor", "findActiveWorktreeOwner", "normalizeReclaimableWorktreePath",
+      "getRunContextFor", "runContextFor", "findActiveWorktreeOwner", "normalizeReclaimableWorktreePath",
       "cleanupConflictingWorktree", "getAutoRecoveryDispatcher", "persistTokenUsage",
     ]),
   });
@@ -1323,7 +1338,7 @@ export function buildBranchConflictHandleFacadeDeps(host: any): any {
 export function buildReconcileStepsFromGitHistoryDeps(host: any): any {
   return {
     ...facadeFields(host, ["store"]),
-    ...facadeMethods(host, ["getRunContextFor", "resolveTaskStepSource"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "resolveTaskStepSource"]),
   };
 }
 
@@ -1355,7 +1370,7 @@ export function buildPauseAbortMarkerDeps(host: any): any {
 export function buildFinalizeAlreadyReviewedTaskDeps(host: any): any {
   return {
     ...facadeFields(host, ["store"]),
-    ...facadeMethods(host, ["getRunContextFor", "resolveResumeLanes"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "resolveResumeLanes"]),
   };
 }
 
@@ -1390,7 +1405,7 @@ export function buildRunImplementationPhaseDeps(host: any): any {
 export function buildRouteResetParsePinMismatchToRetryDeps(host: any): any {
   return {
     ...facadeFields(host, ["store", "activeWorktrees"]),
-    ...facadeMethods(host, ["getRunContextFor", "clearPausedAborted", "persistTokenUsage"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "clearPausedAborted", "persistTokenUsage"]),
   };
 }
 
@@ -1417,7 +1432,7 @@ export function buildSharedWorkerToolsDeps(host: any): any {
   return {
     ...facadeFields(host, ["store", "rootDir"]),
     messageStore: host.options.messageStore,
-    ...facadeMethods(host, ["getRunContextFor"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor"]),
   };
 }
 
@@ -1439,27 +1454,27 @@ export function buildGenerateCompletionFeatureVideoDeps(host: any): any {
 }
 
 export function buildStoreRunContextDeps(host: any): any {
-  return { ...facadeFields(host, ["store"]), ...facadeMethods(host, ["getRunContextFor"]) };
+  return { ...facadeFields(host, ["store"]), ...facadeMethods(host, ["getRunContextFor", "runContextFor"]) };
 }
 
 export function buildCompletionFinalizationFacadeDeps(host: any): any {
   return {
     ...facadeFields(host, ["store"]),
-    ...facadeMethods(host, ["getRunContextFor", "getTaskCompletionBlocker"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "getTaskCompletionBlocker"]),
   };
 }
 
 export function buildStaleLockRecoveryDeps(host: any): any {
   return {
     ...facadeFields(host, ["rootDir", "store"]),
-    ...facadeMethods(host, ["getRunContextFor"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor"]),
   };
 }
 
 export function buildRecoverFailedPreMergeWorkflowStepDeps(host: any): any {
   return {
     store: host.store,
-    ...facadeMethods(host, ["getRunContextFor", "resolveFailedPreMergeWorkflowStepBudget", "sendTaskBackForFix"]),
+    ...facadeMethods(host, ["getRunContextFor", "runContextFor", "resolveFailedPreMergeWorkflowStepBudget", "sendTaskBackForFix"]),
   };
 }
 

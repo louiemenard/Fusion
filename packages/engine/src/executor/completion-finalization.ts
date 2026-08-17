@@ -18,6 +18,7 @@ import {
 export type CompletionFinalizationDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   getTaskCompletionBlocker: (task: Task) => Promise<string | undefined>;
 };
 
@@ -78,7 +79,7 @@ export async function parkCompletedBlockedTask(
       preserveWorktree: true,
       moveSource: "engine",
       recoveryRehome: true,
-    });
+    }, deps.runContextFor(task.id));
   }
   await deps.store.updateTask(task.id, {
     paused: true,
@@ -87,9 +88,9 @@ export async function parkCompletedBlockedTask(
     error: null,
     executeRequeueLoopCount: null,
     executeRequeueLoopSignature: null,
-  }, deps.getRunContextFor(task.id));
+  }, deps.runContextFor(task.id));
   executorLog.log(`${task.id}: ${message}`);
-  await deps.store.logEntry(task.id, message, undefined, deps.getRunContextFor(task.id));
+  await deps.store.logEntry(task.id, message, undefined, deps.runContextFor(task.id));
   await emitBoundedRunAudit(deps.store, {
     taskId: task.id,
     agentId: "executor",

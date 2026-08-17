@@ -38,6 +38,7 @@ import { hasRepeatedUnchangedReview } from "./request-pre-merge-optional-step-fi
 export type RecoverFailedPreMergeStepDeps = {
   store: TaskStore;
   getRunContextFor?: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   resolveFailedPreMergeWorkflowStepBudget: (
     task: Task,
     target: CoreWorkflowStepResult,
@@ -78,7 +79,7 @@ export async function recoverFailedPreMergeWorkflowStep(
         task.id,
         "Failed pre-merge step recovery not scheduled — operator task hold",
         `Reason: ${reason}`,
-        deps.getRunContextFor?.(task.id),
+        deps.runContextFor(task.id),
       );
       return false;
     }
@@ -110,7 +111,7 @@ export async function recoverFailedPreMergeWorkflowStep(
         task.id,
         "Failed pre-merge step recovery not scheduled — revision budget zero/invalid",
         `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`,
-        deps.getRunContextFor?.(task.id),
+        deps.runContextFor(task.id),
       );
       return false;
     }
@@ -150,7 +151,12 @@ export async function recoverFailedPreMergeWorkflowStep(
       });
       if (outcome === "escalated" || outcome === "arbitrated") return true;
       executorLog.warn(`${task.id}: failed pre-merge step recovery NOT scheduled for "${stepName}" — revision budget exhausted (attempts=${budget.attempts}, max=${String(budget.max)}). Card left parked.`);
-      await deps.store.logEntry(task.id, "Failed pre-merge step recovery not scheduled — revision budget exhausted", `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`, deps.getRunContextFor?.(task.id));
+      await deps.store.logEntry(
+        task.id,
+        "Failed pre-merge step recovery not scheduled — revision budget exhausted",
+        `Step: ${stepName}\nAttempts: ${budget.attempts}\nMax: ${String(budget.max)}`,
+        deps.runContextFor(task.id),
+      );
       return false;
     }
 

@@ -19,6 +19,7 @@ import type { MergeBoundaryUnprovenReasonCode } from "./workflow-merge-boundary.
 export type RouteGraphMergeFailureToRetryDeps = {
   store: TaskStore;
   getRunContextFor: (taskId: string) => EngineRunContext | undefined;
+  runContextFor: (taskId: string, fallbackAgentId?: string | null) => import("@fusion/core").RunMutationContext;
   mergeRequester?: ((taskId: string) => Promise<unknown>) | null;
   ensureWorkflowMergeBoundaryTask: (
     live: TaskDetail,
@@ -46,7 +47,7 @@ export async function routeGraphMergeFailureToRetry(
     const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
     const message = `Workflow graph merge failure at node '${failedNode}' routed to bounded auto-merge retry${abortProvenance === "merge-seam" ? " after merge-seam abort" : isGenericAbortProvenance(abortProvenance) || abortProvenance === undefined ? " after benign pause/resume abort" : ""}`;
     executorLog.warn(`${live.id}: ${message}`);
-    await deps.store.logEntry(live.id, message, undefined, deps.getRunContextFor(live.id));
+    await deps.store.logEntry(live.id, message, undefined, deps.runContextFor(live.id));
     try {
       const mergeBoundary = await deps.ensureWorkflowMergeBoundaryTask(live, {
         reason: "workflow-merge-retry-boundary",
@@ -62,7 +63,7 @@ export async function routeGraphMergeFailureToRetry(
       */
       if (mergeBoundary.blocked) {
         const { reason, code, missingInstanceCount } = mergeBoundary.blocked;
-        await deps.store.logEntry(live.id, `Workflow merge boundary retry parked task: ${reason}`, undefined, deps.getRunContextFor(live.id));
+        await deps.store.logEntry(live.id, `Workflow merge boundary retry parked task: ${reason}`, undefined, deps.runContextFor(live.id));
         const outcome = mergeBoundary.task.status !== "failed" || !mergeBoundary.task.error
           ? "parked" as const
           : "already-terminal" as const;
@@ -70,7 +71,7 @@ export async function routeGraphMergeFailureToRetry(
           await deps.store.updateTask(
             live.id,
             { status: "failed", error: `${MERGE_BOUNDARY_UNPROVEN_VALUE.toUpperCase().replaceAll("-", "_")}: ${reason}` },
-            deps.getRunContextFor(live.id),
+            deps.runContextFor(live.id),
           );
         }
         /*
