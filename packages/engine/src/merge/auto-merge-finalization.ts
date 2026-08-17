@@ -11,6 +11,8 @@ import {
   type Task,
   type TaskStore,
 } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { mutationContextForAgent } from "@fusion/core";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "../util/run-audit.js";
 import type { MergeWriteFence } from "./merge-write-fence.js";
 
@@ -319,7 +321,7 @@ export async function finalizeProvenAutoMergeTask({
     await store.updateTask(taskId, {
       status: "failed",
       error: `Merge confirmed but finalization blocked: ${hardBlocker}`,
-    }).catch(() => undefined);
+    }, mutationContextForAgent(auditAgentId ?? "merger")).catch(() => undefined);
     await recordFinalizationAudit({
       store,
       audit,
@@ -360,7 +362,7 @@ export async function finalizeProvenAutoMergeTask({
     overlapBlockedBy: null,
     mergeRetries: 0,
     mergeDetails,
-  } as unknown as Partial<Task>);
+  } as unknown as Partial<Task>, mutationContextForAgent(auditAgentId ?? "merger"));
 
   const shouldRecoveryRehome = latest.column !== mergeColumn;
   if (shouldRecoveryRehome) {
@@ -373,7 +375,7 @@ export async function finalizeProvenAutoMergeTask({
     fence?.assertOwned("finalization");
     const moved = await store.moveTask(taskId, completeColumn, shouldRecoveryRehome
       ? { moveSource: "engine", recoveryRehome: true, preserveProgress: true }
-      : { moveSource: "engine", preserveProgress: true });
+      : { moveSource: "engine", preserveProgress: true }, mutationContextForAgent(auditAgentId ?? "merger"));
     if (result) result.task = moved;
     if (shouldRecoveryRehome) {
       await recordFinalizationAudit({
@@ -388,7 +390,7 @@ export async function finalizeProvenAutoMergeTask({
       fence?.assertOwned("finalization");
       await store.logEntry(
         taskId,
-        `Auto-merge finalization repaired column mismatch: ${latest.column} → ${completeColumn} after proven merge; cleared stale status/blockers`,
+        `Auto-merge finalization repaired column mismatch: ${latest.column} → ${completeColumn} after proven merge; cleared stale status/blockers`, undefined, mutationContextForAgent(auditAgentId ?? "merger"),
       ).catch(() => undefined);
     }
     const finalTask = moved ?? (await store.getTask(taskId).catch(() => null)) ?? latest;

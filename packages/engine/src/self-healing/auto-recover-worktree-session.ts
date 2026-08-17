@@ -8,7 +8,7 @@
  */
 import { resolve } from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
-import { isWorkspaceTask, loadWorkspaceConfig, resolveReboundTarget, resolveWorkflowIrForTask } from "@fusion/core";
+import { isWorkspaceTask, loadWorkspaceConfig, resolveReboundTarget, resolveWorkflowIrForTask, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import { hasUsableWorktreeShape } from "../worktree/worktree-pool.js";
 import {
   classifyMissingWorktreeSessionStartFailure,
@@ -75,6 +75,8 @@ export async function autoRecoverWorktreeSessionStartFailure(
     await store.logEntry(
       task.id,
       `Auto-recovery exhausted (${MAX_WORKTREE_SESSION_RETRIES}/${MAX_WORKTREE_SESSION_RETRIES}) for merge-active unusable-worktree stale-metadata clears — leaving in-review for human inspection`,
+      undefined,
+      UNATTRIBUTED_MUTATION_CONTEXT,
     );
     await opts.auditor?.database({
       type: "task:auto-recover-worktree-session-exhausted",
@@ -93,6 +95,8 @@ export async function autoRecoverWorktreeSessionStartFailure(
     await store.logEntry(
       task.id,
       `Auto-recovery exhausted (${MAX_WORKTREE_SESSION_RETRIES}/${MAX_WORKTREE_SESSION_RETRIES}) for unusable-worktree session-start failure — leaving in-review for human inspection`,
+      undefined,
+      UNATTRIBUTED_MUTATION_CONTEXT,
     );
     await opts.auditor?.database({
       type: "task:auto-recover-worktree-session-exhausted",
@@ -153,7 +157,7 @@ export async function autoRecoverWorktreeSessionStartFailure(
       ? {}
       : { branch: nextBranch, branchWriteOrigin: "engine" as const }),
     sessionFile: null,
-  });
+  }, UNATTRIBUTED_MUTATION_CONTEXT);
   await opts.auditor?.database({
     type: "task:auto-recover-worktree-session-metadata",
     target: task.id,
@@ -204,12 +208,14 @@ export async function autoRecoverWorktreeSessionStartFailure(
             ? `; the recorded task worktree ${staleWorktree} is ${recordedWorktreeStillUsable ? "still present" : "gone too"}`
             : ""
         } — cleared stale session metadata${clearWorktreeMetadata && !branchIsRederivable ? ` (kept non-canonical branch ${task.branch})` : ""} and requeued to ${reboundColumn} (${attemptLabel}, failure: ${failureExcerpt})`,
+    undefined,
+    UNATTRIBUTED_MUTATION_CONTEXT,
   );
   if (noProgress) {
     // #1411: backward recovery move — recoveryRehome skips order-derived adjacency.
-    await store.moveTask(task.id, reboundColumn, { moveSource: "engine", recoveryRehome: true });
+    await store.moveTask(task.id, reboundColumn, { moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
   } else {
-    await store.moveTask(task.id, reboundColumn, { preserveProgress: true, moveSource: "engine", recoveryRehome: true });
+    await store.moveTask(task.id, reboundColumn, { preserveProgress: true, moveSource: "engine", recoveryRehome: true }, UNATTRIBUTED_MUTATION_CONTEXT);
   }
   return { outcome: "requeue-todo", retries: nextCount, classification };
 }

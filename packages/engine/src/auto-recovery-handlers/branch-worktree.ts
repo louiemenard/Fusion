@@ -2,7 +2,8 @@ import { exec } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { Task, TaskStore } from "@fusion/core";
-import { isFusionDeletableBranch, resolveWorkflowIrForTask, columnsWithFlag, resolveReboundTarget, TransitionRejectionError } from "@fusion/core";
+/* FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B): mutation-context constructors for this lane. */
+import { isFusionDeletableBranch, resolveWorkflowIrForTask, columnsWithFlag, resolveReboundTarget, TransitionRejectionError, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import {
   classifyBootstrapMisbinding,
   inspectBranchConflict,
@@ -207,7 +208,7 @@ export class BranchWorktreeAutoRecoveryHandler {
         preserveResumeState: true,
         preserveProgress: true,
         preserveWorktree: false,
-      });
+      }, UNATTRIBUTED_MUTATION_CONTEXT);
     } catch (err) {
       const code = err instanceof TransitionRejectionError ? err.rejection.code : undefined;
       moveFailure = {
@@ -237,7 +238,7 @@ export class BranchWorktreeAutoRecoveryHandler {
     }
 
     if (wipColumns.has(task.column)) {
-      await this.deps.taskStore.updateTask(task.id, { branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null });
+      await this.deps.taskStore.updateTask(task.id, { branch: null, branchWriteOrigin: "engine" as const, baseCommitSha: null }, UNATTRIBUTED_MUTATION_CONTEXT);
     }
     await this.deps.runAudit.database({
       type: "branch-worktree:auto-requeue",
