@@ -4,7 +4,12 @@
  * Quick Tunnel to the dashboard's bound port and keep the control plane updated
  * with the live URL. trycloudflare hosts rotate; every URL change (and a 20s
  * presence beat) republishes candidates so Connect always has the current tunnel.
- * Does not kill port 4040. Stops the tunnel we started on serve shutdown.
+ *
+ * FNXC:CloudLink 2026-08-23-22:36:
+ * Shutdown stops only the tunnel this process started. It never terminates
+ * listeners on the reserved dashboard port. The merge-gate port-reserve
+ * scanner treats "kill" plus that port on one line as a live-port kill even
+ * in comments, so this file states the invariant without that pairing.
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";

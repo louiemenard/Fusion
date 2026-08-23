@@ -112,7 +112,7 @@ describe("CloudLinkPresence", () => {
       probeCloudflared: async () => false,
       intervalMs: 60_000,
     });
-    await presence.start(4040);
+    await presence.start(51234);
     expect(heartbeat).toHaveBeenCalled();
     await presence.stop();
   });
@@ -124,7 +124,7 @@ describe("CloudLinkPresence", () => {
       heartbeat,
       probeCloudflared: async () => true,
     });
-    await presence.start(4040);
+    await presence.start(51234);
     expect(heartbeat).not.toHaveBeenCalled();
     await presence.stop();
   });
