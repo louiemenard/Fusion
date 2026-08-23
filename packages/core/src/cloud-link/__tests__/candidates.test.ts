@@ -14,6 +14,10 @@ describe("classifyCandidateUrl", () => {
 
   it("labels tailscale, public https, and lan", () => {
     expect(classifyCandidateUrl("https://box.tailnet.ts.net")).toBe("tailscale");
+    expect(classifyCandidateUrl("http://100.64.0.1:4040")).toBe("tailscale");
+    expect(classifyCandidateUrl("http://100.127.255.254:4040")).toBe("tailscale");
+    expect(classifyCandidateUrl("http://100.63.255.255:4040")).toBe("lan");
+    expect(classifyCandidateUrl("http://100.128.0.1:4040")).toBe("lan");
     expect(classifyCandidateUrl("https://edge.example")).toBe("public");
     expect(classifyCandidateUrl("http://192.168.1.9:4040")).toBe("lan");
   });

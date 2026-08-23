@@ -69,6 +69,7 @@ export class CloudLinkPresence {
   private port = 0;
   private running = false;
   private sending = false;
+  private generation = 0;
 
   constructor(deps: CloudLinkPresenceDeps = {}) {
     this.loadState = deps.loadState ?? loadCloudLinkState;
@@ -87,12 +88,15 @@ export class CloudLinkPresence {
     if (!state?.engineId || !state.deviceSecret) {
       return;
     }
+    const generation = ++this.generation;
     this.port = port;
     this.running = true;
 
     const hasCloudflared = await this.probeCloudflared();
+    if (!this.isCurrent(generation)) return;
     if (hasCloudflared) {
       const tunnel = this.createTunnel();
+      if (!this.isCurrent(generation)) return;
       this.tunnel = tunnel;
       this.unsub = tunnel.subscribeStatus((snapshot) => {
         void this.onTunnelStatus(snapshot);
@@ -105,6 +109,10 @@ export class CloudLinkPresence {
           args: ["tunnel", "--url", `http://127.0.0.1:${port}`],
           readinessTimeoutMs: 25_000,
         });
+        if (!this.isCurrent(generation)) {
+          await tunnel.stop().catch(() => undefined);
+          return;
+        }
         this.startedTunnel = true;
         this.log(`Started Cloudflare Quick Tunnel to 127.0.0.1:${port}`);
       } catch (err) {
@@ -115,14 +123,21 @@ export class CloudLinkPresence {
       this.log("cloudflared is not on PATH; Cloud Link will publish LAN only until it is installed.");
     }
 
+    if (!this.isCurrent(generation)) return;
     await this.publish();
+    if (!this.isCurrent(generation)) return;
     this.timer = setInterval(() => {
       void this.publish();
     }, this.intervalMs);
     this.timer.unref?.();
   }
 
+  private isCurrent(generation: number): boolean {
+    return this.running && this.generation === generation;
+  }
+
   async stop(): Promise<void> {
+    this.generation += 1;
     this.running = false;
     if (this.timer) {
       clearInterval(this.timer);
@@ -194,6 +209,7 @@ export async function probeCloudflaredOnPath(): Promise<boolean> {
 }
 
 let singleton: CloudLinkPresence | null = null;
+let lifecycle = Promise.resolve<CloudLinkPresence | null>(null);
 
 /**
  * Start (or no-op) Cloud Link tunnel+heartbeat for this process after the
@@ -203,22 +219,35 @@ export async function startCloudLinkPresence(
   port: number,
   log?: CloudLinkLog,
 ): Promise<CloudLinkPresence | null> {
-  const state = loadCloudLinkState();
-  if (!state?.engineId || !state.deviceSecret) {
-    return null;
-  }
-  if (singleton) {
-    await singleton.stop();
-    singleton = null;
-  }
-  const presence = new CloudLinkPresence({ log });
-  singleton = presence;
-  await presence.start(port);
-  return presence;
+  const run = async (): Promise<CloudLinkPresence | null> => {
+    const state = loadCloudLinkState();
+    if (!state?.engineId || !state.deviceSecret) {
+      return null;
+    }
+    if (singleton) {
+      await singleton.stop();
+      singleton = null;
+    }
+    const presence = new CloudLinkPresence({ log });
+    singleton = presence;
+    await presence.start(port);
+    if (singleton !== presence) {
+      await presence.stop();
+      return singleton;
+    }
+    return presence;
+  };
+  lifecycle = lifecycle.then(run, run);
+  return lifecycle;
 }
 
 export async function stopCloudLinkPresence(): Promise<void> {
-  if (!singleton) return;
-  await singleton.stop();
-  singleton = null;
+  const run = async (): Promise<CloudLinkPresence | null> => {
+    if (!singleton) return null;
+    await singleton.stop();
+    singleton = null;
+    return null;
+  };
+  lifecycle = lifecycle.then(run, run);
+  await lifecycle;
 }

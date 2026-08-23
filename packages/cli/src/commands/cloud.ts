@@ -9,7 +9,6 @@ import {
   cloudHeartbeat,
   cloudPairComplete,
   cloudPairStart,
-  CLOUD_LINK_HEARTBEAT_MS,
   candidateFromUrl,
   lanCandidate,
   loadCloudLinkPending,
@@ -53,17 +52,39 @@ export async function runCloudPairStart(opts: {
   }
 }
 
-export async function runCloudPairComplete(opts: {
-  http?: string;
-  code?: string;
-  pendingSecret?: string;
-}): Promise<void> {
-  const pending = loadCloudLinkPending();
+/**
+ * FNXC:CloudLink 2026-08-23-15:40:
+ * Pending pairing is bound to the control plane that created it. If either
+ * credential is loaded from the pending file, --http must match that origin
+ * unless both --code and --pending-secret are supplied explicitly.
+ */
+export function resolveCloudPairCompleteRequest(
+  opts: {
+    http?: string;
+    code?: string;
+    pendingSecret?: string;
+  },
+  loadPending: typeof loadCloudLinkPending = loadCloudLinkPending,
+): { http: string; code: string; pendingSecret: string } {
+  const pending = loadPending();
+  const explicitCode = Boolean(opts.code);
+  const explicitSecret = Boolean(opts.pendingSecret);
+  const usedPendingCredential = Boolean(
+    pending && ((!explicitCode && pending.code) || (!explicitSecret && pending.pendingSecret)),
+  );
   const http = opts.http
     ? resolveHttpBase(opts.http)
     : pending
       ? normalizeCloudControlPlaneUrl(pending.httpBaseUrl)
       : resolveHttpBase(undefined);
+  if (usedPendingCredential && opts.http) {
+    const pendingOrigin = normalizeCloudControlPlaneUrl(pending!.httpBaseUrl);
+    if (pendingOrigin !== http) {
+      throw new Error(
+        "Pending pairing belongs to a different Cloud URL. Omit --http, or pass both --code and --pending-secret.",
+      );
+    }
+  }
   const code = opts.code ?? pending?.code;
   const pendingSecret = opts.pendingSecret ?? pending?.pendingSecret;
   if (!code || !pendingSecret) {
@@ -71,6 +92,15 @@ export async function runCloudPairComplete(opts: {
       "No pending pairing. Run fn cloud pair-start first, or pass --code and --pending-secret.",
     );
   }
+  return { http, code, pendingSecret };
+}
+
+export async function runCloudPairComplete(opts: {
+  http?: string;
+  code?: string;
+  pendingSecret?: string;
+}): Promise<void> {
+  const { http, code, pendingSecret } = resolveCloudPairCompleteRequest(opts);
   const completed = await cloudPairComplete(http, { code, pendingSecret });
   saveCloudLinkState({
     httpBaseUrl: http,
@@ -89,7 +119,6 @@ export async function runCloudPairComplete(opts: {
 export async function runCloudHeartbeat(opts: {
   url?: string;
   port?: number;
-  loop?: boolean;
   tunnel?: boolean;
 }): Promise<void> {
   const state = loadCloudLinkState();
@@ -126,21 +155,13 @@ export async function runCloudHeartbeat(opts: {
     throw new Error("Provide --url <engine-origin> or ensure a LAN IPv4 is available.");
   }
 
-  const beat = async () => {
-    const result = await cloudHeartbeat(state.httpBaseUrl, {
-      engineId: state.engineId,
-      deviceSecret: state.deviceSecret,
-      candidates,
-      capabilities: { headless: true, dashboard: true },
-    });
-    console.log(new Date().toISOString(), "heartbeat", result.status);
-  };
-  await beat();
-  if (!opts.loop) return;
-  for (;;) {
-    await new Promise((r) => setTimeout(r, CLOUD_LINK_HEARTBEAT_MS));
-    await beat();
-  }
+  const result = await cloudHeartbeat(state.httpBaseUrl, {
+    engineId: state.engineId,
+    deviceSecret: state.deviceSecret,
+    candidates,
+    capabilities: { headless: true, dashboard: true },
+  });
+  console.log(new Date().toISOString(), "heartbeat", result.status);
 }
 
 export async function runCloudStatus(opts: { json?: boolean } = {}): Promise<void> {

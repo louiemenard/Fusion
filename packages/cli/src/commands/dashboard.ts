@@ -2897,6 +2897,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       }
 
       await logShutdownDiagnostics(signal);
+      await timeShutdownStep("stopCloudLinkPresence", () => stopCloudLinkPresence());
       await disposeAsync();
       stopDiagnosticInterval();
       if (triggerScheduler) triggerScheduler.stop();
@@ -3029,10 +3030,18 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     Linked instances start a Cloudflare Quick Tunnel to this bound port and
     republish the URL to Cloud Link whenever cloudflared rotates it.
     */
-    void startCloudLinkPresence(actualPort, (message) => logSink.log(message, "cloud-link")).catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      logSink.warn(`Cloud Link presence failed: ${message}`, "cloud-link");
-    });
+    /*
+    FNXC:CloudLink 2026-08-23-15:40:
+    Do not publish an unauthenticated dashboard through a public Quick Tunnel.
+    */
+    if (dashboardAuthToken) {
+      void startCloudLinkPresence(actualPort, (message) => logSink.log(message, "cloud-link")).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logSink.warn(`Cloud Link presence failed: ${message}`, "cloud-link");
+      });
+    } else {
+      logSink.log("Skipping public tunnel because dashboard auth is off.", "cloud-link");
+    }
 
     /*
     FNXC:DevTunnel 2026-08-19-04:30:

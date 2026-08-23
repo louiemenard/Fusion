@@ -16,6 +16,18 @@ export function originOf(url: string): string {
   return new URL(url).origin;
 }
 
+/**
+ * FNXC:CloudLink 2026-08-23-15:40:
+ * Tailscale CGNAT is 100.64.0.0/10 (100.64.0.0–100.127.255.255), not all 100.*.*.*.
+ */
+export function isTailscaleCgnatIpv4(host: string): boolean {
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  return a === 100 && b >= 64 && b <= 127;
+}
+
 export function classifyCandidateUrl(url: string): CloudCandidateKind {
   let parsed: URL;
   try {
@@ -27,7 +39,7 @@ export function classifyCandidateUrl(url: string): CloudCandidateKind {
   if (host.endsWith(".trycloudflare.com") || host.endsWith(".cfargotunnel.com")) {
     return "cloudflare";
   }
-  if (host.endsWith(".ts.net") || /^100\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) {
+  if (host.endsWith(".ts.net") || isTailscaleCgnatIpv4(host)) {
     return "tailscale";
   }
   if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost")) {

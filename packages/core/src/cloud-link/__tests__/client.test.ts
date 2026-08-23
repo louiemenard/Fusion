@@ -25,9 +25,15 @@ describe("normalizeCloudControlPlaneUrl", () => {
     );
   });
 
-  it("accepts loopback http", () => {
+  it("accepts loopback http for localhost, 127.0.0.1, and ::1", () => {
+    expect(normalizeCloudControlPlaneUrl("http://localhost:3210")).toBe(
+      "http://localhost:3210",
+    );
     expect(normalizeCloudControlPlaneUrl("http://127.0.0.1:3210")).toBe(
       "http://127.0.0.1:3210",
+    );
+    expect(normalizeCloudControlPlaneUrl("http://[::1]:3210")).toBe(
+      "http://[::1]:3210",
     );
   });
 

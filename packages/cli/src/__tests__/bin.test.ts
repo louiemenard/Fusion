@@ -479,6 +479,50 @@ describe("bin command routing and fallbacks", () => {
     });
   });
 
+  it("dispatches every cloud subcommand", async () => {
+    await runBin(["cloud", "pair-start", "--http", "https://cloud.example.convex.site", "--name", "studio"]);
+    expect(commandMocks.runCloudPairStart).toHaveBeenCalledWith({
+      http: "https://cloud.example.convex.site",
+      name: "studio",
+    });
+
+    await runBin(["cloud", "pair-complete"]);
+    expect(commandMocks.runCloudPairComplete).toHaveBeenCalledWith({
+      http: undefined,
+      code: undefined,
+      pendingSecret: undefined,
+    });
+
+    await runBin([
+      "cloud",
+      "pair-complete",
+      "--http",
+      "https://cloud.example.convex.site",
+      "--code",
+      "ABCD-EFGH",
+      "--pending-secret",
+      "secret",
+    ]);
+    expect(commandMocks.runCloudPairComplete).toHaveBeenLastCalledWith({
+      http: "https://cloud.example.convex.site",
+      code: "ABCD-EFGH",
+      pendingSecret: "secret",
+    });
+
+    await runBin(["cloud", "heartbeat", "--url", "https://abc.trycloudflare.com", "--port", "51234"]);
+    expect(commandMocks.runCloudHeartbeat).toHaveBeenCalledWith({
+      url: "https://abc.trycloudflare.com",
+      port: 51234,
+      tunnel: true,
+    });
+
+    await runBin(["cloud", "status", "--json"]);
+    expect(commandMocks.runCloudStatus).toHaveBeenCalledWith({ json: true });
+
+    await runBin(["cloud", "unlink"]);
+    expect(commandMocks.runCloudUnlink).toHaveBeenCalled();
+  });
+
   it("errors when settings import file is missing", async () => {
     await expect(runBin(["settings", "import"])).rejects.toThrow("process.exit:1");
     expect(errorSpy).toHaveBeenCalledWith(

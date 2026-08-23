@@ -118,7 +118,8 @@ describe("remote-login global settings handoff", () => {
     for (const payload of [url.body, qr.body, { url: (loginUrl.body as { loginUrl: string }).loginUrl }]) {
       const handoff = await request(app, "GET", `/remote-login?rt=${tokenFromLoginUrl(payload)}`);
       expect(handoff.status).toBe(302);
-      expect(handoff.headers.location).toBe(`/?token=${daemonToken}`);
+      expect(handoff.headers.location).toBe("/");
+      expect(handoff.headers.location).not.toMatch(/token=/);
     }
   });
 
@@ -182,7 +183,7 @@ describe("remote-login global settings handoff", () => {
     try {
       const env = await bootRemoteServer({ token: "env-token", useEnvironmentToken: true });
       dirs.push(env.dir);
-      expect((await request(env.app, "GET", "/remote-login?rt=env-token")).headers.location).toBe("/?token=environment-daemon-token");
+      expect((await request(env.app, "GET", "/remote-login?rt=env-token")).headers.location).toBe("/");
     } finally {
       if (previous === undefined) delete process.env.FUSION_DAEMON_TOKEN;
       else process.env.FUSION_DAEMON_TOKEN = previous;
@@ -208,6 +209,62 @@ describe("remote-login global settings handoff", () => {
     const response = await request(app, "GET", "/remote-login?rt=new-token");
 
     expect(response.status).toBe(302);
-    expect(response.headers.location).toBe(`/?token=${daemonToken}`);
+    expect(response.headers.location).toBe("/");
+    expect(response.headers.location).not.toMatch(/token=/);
+  });
+
+  it("rate-limits the 31st cloudTicket request before redeeming", async () => {
+    const previous = process.env.FUSION_CLOUD_HTTP_URL;
+    process.env.FUSION_CLOUD_HTTP_URL = "https://cloud.example.convex.site";
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ engineId: "eng_1", userId: "user_1", localSessionToken: "sess" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const { app, dir } = await bootRemoteServer();
+      dirs.push(dir);
+      for (let i = 0; i < 30; i++) {
+        await request(app, "GET", "/remote-login?cloudTicket=jti.secret");
+      }
+      const blocked = await request(app, "GET", "/remote-login?cloudTicket=jti.secret");
+      expect(blocked.status).toBe(429);
+      expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(30);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previous === undefined) delete process.env.FUSION_CLOUD_HTTP_URL;
+      else process.env.FUSION_CLOUD_HTTP_URL = previous;
+    }
+  });
+
+  it("redeems a cloud ticket without putting credentials in Location", async () => {
+    const previous = process.env.FUSION_CLOUD_HTTP_URL;
+    process.env.FUSION_CLOUD_HTTP_URL = "https://cloud.example.convex.site";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ engineId: "eng_1", userId: "user_1", localSessionToken: "sess" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    try {
+      const { app, dir } = await bootRemoteServer();
+      dirs.push(dir);
+      const handoff = await request(app, "GET", "/remote-login?cloudTicket=jti.secret");
+      expect(handoff.status).toBe(302);
+      expect(handoff.headers.location).toBe("/");
+      expect(handoff.headers.location).not.toMatch(/token=/);
+      const cookie = handoff.headers["set-cookie"];
+      const cookieValue = Array.isArray(cookie) ? cookie.join(";") : String(cookie ?? "");
+      expect(cookieValue).toMatch(/HttpOnly/i);
+    } finally {
+      vi.unstubAllGlobals();
+      if (previous === undefined) delete process.env.FUSION_CLOUD_HTTP_URL;
+      else process.env.FUSION_CLOUD_HTTP_URL = previous;
+    }
   });
 });

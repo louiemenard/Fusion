@@ -1117,9 +1117,17 @@ export async function runServe(
    * After listen, a linked instance provisions a Cloudflare Quick Tunnel to this
    * bound port and heartbeats the live URL (including rotations) to Cloud Link.
    */
-  void startCloudLinkPresence(actualPort, (message) => console.log(`[cloud-link] ${message}`)).catch((error) => {
-    console.warn(`[cloud-link] Presence failed: ${error instanceof Error ? error.message : String(error)}`);
-  });
+  /*
+   * FNXC:CloudLink 2026-08-23-15:40:
+   * Do not publish an unauthenticated dashboard through a public Quick Tunnel.
+   */
+  if (daemonToken) {
+    void startCloudLinkPresence(actualPort, (message) => console.log(`[cloud-link] ${message}`)).catch((error) => {
+      console.warn(`[cloud-link] Presence failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  } else {
+    console.log("[cloud-link] Skipping public tunnel because dashboard auth is off.");
+  }
 
   /*
   FNXC:CustomProviders 2026-06-30-00:00:
@@ -1349,6 +1357,7 @@ export async function runServe(
   });
   } catch (error) {
     /* FNXC:PostgresServeLifecycle 2026-07-14-19:10: Any startup failure after the shared PostgreSQL boot must unwind partially-started engines and CentralCore before releasing the sole backend owner exactly once. */
+    await stopCloudLinkPresence().catch(() => undefined);
     await startupEngineManager?.stopAll().catch(() => undefined);
     await sharedCentralCore?.close().catch(() => undefined);
     await shutdownCentralBackendOnce().catch(() => undefined);

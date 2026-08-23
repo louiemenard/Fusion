@@ -128,4 +128,28 @@ describe("CloudLinkPresence", () => {
     expect(heartbeat).not.toHaveBeenCalled();
     await presence.stop();
   });
+
+  it("abandons a deferred start after stop so no tunnel is left running", async () => {
+    let release!: (value: boolean) => void;
+    const probe = new Promise<boolean>((resolve) => {
+      release = resolve;
+    });
+    const tunnel = new FakeTunnel();
+    const presence = new CloudLinkPresence({
+      loadState: () => ({
+        httpBaseUrl: "https://cloud.example.convex.site",
+        engineId: "eng_1",
+        deviceSecret: "secret",
+        linkedAt: "2026-08-22T00:00:00Z",
+      }),
+      heartbeat: vi.fn(async () => ({ status: "online" })),
+      createTunnel: () => tunnel,
+      probeCloudflared: () => probe,
+    });
+    const startP = presence.start(51234);
+    await presence.stop();
+    release(true);
+    await startP;
+    expect(tunnel.started).toBe(false);
+  });
 });
