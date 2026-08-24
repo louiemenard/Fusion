@@ -2089,6 +2089,12 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   async function disposeAsync(): Promise<void> {
     if (disposed) return;
     disposed = true;
+    /*
+    FNXC:CloudLink 2026-08-24-00:05:
+    Programmatic dispose() must stop Cloud Link presence so a Quick Tunnel and
+    heartbeat timer cannot outlive the dashboard backend.
+    */
+    await stopCloudLinkPresence().catch(() => undefined);
 
     // Clear pending debounce timer
     if (tuiRefreshDebounceTimer) {
@@ -3031,7 +3037,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     republish the URL to Cloud Link whenever cloudflared rotates it.
     */
     /*
-    FNXC:CloudLink 2026-08-23-15:40:
+    FNXC:CloudLink 2026-08-24-00:05:
     Do not publish an unauthenticated dashboard through a public Quick Tunnel.
     */
     if (dashboardAuthToken) {

@@ -1118,7 +1118,7 @@ export async function runServe(
    * bound port and heartbeats the live URL (including rotations) to Cloud Link.
    */
   /*
-   * FNXC:CloudLink 2026-08-23-15:40:
+   * FNXC:CloudLink 2026-08-24-00:05:
    * Do not publish an unauthenticated dashboard through a public Quick Tunnel.
    */
   if (daemonToken) {

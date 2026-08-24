@@ -1,4 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
 import type { CloudLinkPendingPairing } from "@fusion/core";
 import { resolveCloudPairCompleteRequest } from "../cloud.js";
 
@@ -59,11 +61,20 @@ describe("resolveCloudPairCompleteRequest", () => {
 });
 
 describe("runCloudHeartbeat", () => {
-  it("is imported as a single-shot handler for --url (no loop option)", async () => {
-    const src = await import("node:fs").then((fs) =>
-      fs.readFileSync(new URL("../cloud.ts", import.meta.url), "utf8"),
-    );
+  it("is a single-shot handler for --url (no poll loop)", () => {
+    const src = readFileSync(fileURLToPath(new URL("../cloud.ts", import.meta.url)), "utf8");
     expect(src).not.toMatch(/for\s*\(\s*;\s*;\s*\)/);
     expect(src).not.toMatch(/opts\.loop/);
+  });
+});
+
+describe("dashboard Cloud Link teardown", () => {
+  it("stops presence from disposeAsync", () => {
+    const src = readFileSync(fileURLToPath(new URL("../dashboard.ts", import.meta.url)), "utf8");
+    const start = src.indexOf("async function disposeAsync");
+    const end = src.indexOf("const dispose =");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(src.slice(start, end)).toContain("stopCloudLinkPresence");
   });
 });

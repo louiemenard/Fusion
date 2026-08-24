@@ -17,7 +17,7 @@ export function originOf(url: string): string {
 }
 
 /**
- * FNXC:CloudLink 2026-08-23-15:40:
+ * FNXC:CloudLink 2026-08-24-00:05:
  * Tailscale CGNAT is 100.64.0.0/10 (100.64.0.0–100.127.255.255), not all 100.*.*.*.
  */
 export function isTailscaleCgnatIpv4(host: string): boolean {

@@ -1,5 +1,5 @@
 /**
- * FNXC:CloudLink 2026-08-21-22:30:
+ * FNXC:CloudLink 2026-08-24-00:05:
  * CLI for cloud-link Mode A — pair / complete / heartbeat / status / unlink.
  * Pending pairing is stored separately so pair-start cannot wipe a live link.
  */
@@ -53,7 +53,7 @@ export async function runCloudPairStart(opts: {
 }
 
 /**
- * FNXC:CloudLink 2026-08-23-15:40:
+ * FNXC:CloudLink 2026-08-24-00:05:
  * Pending pairing is bound to the control plane that created it. If either
  * credential is loaded from the pending file, --http must match that origin
  * unless both --code and --pending-secret are supplied explicitly.

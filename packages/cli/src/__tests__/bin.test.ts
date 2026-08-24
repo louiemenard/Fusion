@@ -516,6 +516,13 @@ describe("bin command routing and fallbacks", () => {
       tunnel: true,
     });
 
+    await runBin(["cloud", "heartbeat", "--no-tunnel", "--port", "51234"]);
+    expect(commandMocks.runCloudHeartbeat).toHaveBeenLastCalledWith({
+      url: undefined,
+      port: 51234,
+      tunnel: false,
+    });
+
     await runBin(["cloud", "status", "--json"]);
     expect(commandMocks.runCloudStatus).toHaveBeenCalledWith({ json: true });
 

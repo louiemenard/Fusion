@@ -429,8 +429,8 @@ PR:
                                       Start cloud-link pairing (prints code)
   fn cloud pair-complete [--http <url>] [--code <code>] [--pending-secret <secret>]
                                       Finish pairing after console claim (uses pending file if flags omitted)
-  fn cloud heartbeat [--url <origin>] [--port <n>]
-                                      One-shot publish, or without --url start a Cloudflare tunnel until Ctrl+C
+  fn cloud heartbeat [--url <origin>] [--port <n>] [--no-tunnel]
+                                      One-shot publish. Without --url, start a Cloudflare tunnel until Ctrl+C. --no-tunnel publishes LAN only.
   fn cloud status [--json]             Show local cloud-link state
   fn cloud unlink                      Clear ~/.fusion/cloud-link.json
   fn settings                          Show current Fusion configuration
@@ -1180,7 +1180,7 @@ async function main() {
 
       case "cloud": {
         /*
-        FNXC:CloudLink 2026-08-21-22:25:
+        FNXC:CloudLink 2026-08-24-00:05:
         Thin client for cloud-link Mode A pairing and presence.
         */
         const subcommand = args[1];
