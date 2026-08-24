@@ -19,7 +19,7 @@ import type {
   WorkflowStep,
   WorkspaceConfig,
 } from "@fusion/core";
-import { isLegacyWorkspaceWorktreeLayout, resolveEffectiveAgent, resolveWorkspaceTaskWorktreeDir, THINKING_LEVELS } from "@fusion/core";
+import { isLegacyWorkspaceWorktreeLayout, resolveEffectiveAgent, resolveWorkspaceTaskDirSegment, resolveWorkspaceTaskWorktreeDir, THINKING_LEVELS } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import type { WorkflowNodeResult } from "../workflows/workflow-graph-executor.js";
@@ -259,7 +259,7 @@ export async function runGraphCustomNode(
     }
 
     const workspaceTaskDir = workspaceConfig
-      ? resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, executionTarget.id)
+      ? resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, resolveWorkspaceTaskDirSegment(executionTarget))
       : undefined;
     const legacyWorkspacePath = workspaceConfig && workspaceTaskDir
       && isLegacyWorkspaceWorktreeLayout(executionTarget, workspaceTaskDir)
@@ -504,7 +504,7 @@ export async function runGraphCustomNode(
       if (live.repositoryScope?.state !== "confirmed") {
         outcome = { success: false, error: "Workspace Code Review requires confirmed repository scope", failureValue: "workspace-review-scope-unresolved" };
       } else {
-        const workspaceTaskDir = resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, live.id);
+        const workspaceTaskDir = resolveWorkspaceTaskWorktreeDir(deps.rootDir, settings, resolveWorkspaceTaskDirSegment(live));
         const legacyWorkspaceLayout = isLegacyWorkspaceWorktreeLayout(live, workspaceTaskDir);
         const scopedRepoRoots = live.repositoryScope.repositories.map((repoRelPath) => ({
           repoRelPath,

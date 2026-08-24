@@ -2429,6 +2429,7 @@ export {
   workspaceRepoSegment,
   resolveWorktreesDirLayout,
   resolveWorkspaceTaskWorktreeDir,
+  resolveWorkspaceTaskDirSegment,
   resolveWorkspaceRepoWorktreePath,
   isLegacyWorkspaceWorktreeLayout,
 } from "./tasks/worktree-layout.js";
