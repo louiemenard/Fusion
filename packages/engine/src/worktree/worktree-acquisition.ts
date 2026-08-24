@@ -5,7 +5,7 @@ import { exec } from "node:child_process";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { acquireWorktreePathReservation, assertWorkspaceRepoRelPath, canonicalizeWorktreePath, classifyTaskBranchOrigin, isLegacyWorkspaceWorktreeLayout, resolveEngineIncarnationId, resolveEngineNodeId, deriveWorkspaceTaskDirSegment, resolveWorkspaceRepoWorktreePath, resolveWorkspaceTaskDirSegment, resolveWorkspaceTaskWorktreeDir, workspaceWorktreeGroupSegment, WORKSPACE_GROUP_MARKER_FILENAME, type RunMutationContext, type Settings, type Task, type TaskStore, type SecretsStore, type WorkspaceConfig, type WorkspaceLeaseHandle, type WorkspaceWorktreeContext } from "@fusion/core";
-import { generateWorktreeName, resolveTaskWorkingBranch, resolveTaskWorkingBranchWithOrigin, slugify } from "./worktree-names.js";
+import { generateWorktreeName, resolveTaskWorkingBranch, resolveTaskWorkingBranchWithOrigin } from "./worktree-names.js";
 import { resolveTaskWorktreePathForBackend, resolveWorktreesDir, WORKTREE_RECOVERY_DIRNAME } from "./worktree-paths.js";
 import { hydrateWorktreeDb } from "./worktree-db-hydrate.js";
 import { formatError } from "../logger.js";
@@ -528,10 +528,24 @@ export async function acquireTaskWorktree(opts: AcquireTaskWorktreeOptions): Pro
 
   let worktreePath = task.worktree;
   if (!worktreePath) {
+    /*
+    FNXC:WorkspaceWorktree 2026-08-24-06:11:
+    R14: this is the SECOND single-repository naming site (the first is `planTaskWorktreePath`, used
+    by scheduler dispatch and the manual-move route). It runs whenever a task reaches acquisition
+    with no pre-planned `task.worktree`, so a mode handled only in the planner would silently fall
+    through to a random name here — the same "resolved seam nobody wired" shape. Both sites resolve
+    `branch` and `task-title` through the one core derivation ladder.
+    */
     const worktreeName = naming === "task-id"
       ? task.id.toLowerCase()
-      : naming === "task-title"
-        ? slugify(task.title || task.description.slice(0, 60))
+      : naming === "task-title" || naming === "branch"
+        ? deriveWorkspaceTaskDirSegment({
+            taskId: task.id,
+            worktreeNaming: naming,
+            branch: branchName,
+            title: task.title,
+            description: task.description,
+          }).segment
         : generateWorktreeName(rootDir, settings, workspaceContext);
     worktreePath = await resolveTaskWorktreePathForBackend(rootDir, worktreeName, settings, backend, branchName, workspaceContext);
   }
@@ -2012,6 +2026,34 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
     description: input.task.description,
     siblingSegments: namesFromTask ? await collectLiveSiblingTaskDirSegments(input.store, input.task.id) : undefined,
   });
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+  The pin is write-ONCE: two concurrent first acquisitions for the same task (a mid-flight scope
+  extension racing the primary dispatch) must converge on one directory, or one of them creates a
+  checkout the other cannot resolve. Mint under the store's per-task advisory lock and re-read
+  inside it, so the loser adopts the winner's segment instead of overwriting it. A store without the
+  atomic seam (focused test fakes) degrades to the plain write.
+  */
+  const atomic = (input.store as Partial<TaskStore>).updateTaskAtomic;
+  let pinned = segment;
+  if (typeof atomic === "function") {
+    const updated = await atomic.call(input.store, input.task.id, (current: Task) => {
+      const existingPin = current.workspaceWorktreeDirSegment;
+      if (typeof existingPin === "string" && existingPin.length > 0) {
+        pinned = existingPin;
+        return null;
+      }
+      return { workspaceWorktreeDirSegment: segment };
+    }, input.runContext);
+    input.logger?.log(`${input.task.id}: pinned workspace worktree directory segment ${pinned}`);
+    if (fallbackReason && pinned === segment) {
+      await input.store.logEntry(
+        input.task.id,
+        `[worktree] workspace directory name fell back to the task id (${fallbackReason})`,
+      ).catch(() => {});
+    }
+    return updated;
+  }
   await input.store.updateTask(input.task.id, { workspaceWorktreeDirSegment: segment }, input.runContext);
   input.logger?.log(`${input.task.id}: pinned workspace worktree directory segment ${segment}`);
   if (fallbackReason) {
