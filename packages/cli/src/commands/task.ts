@@ -1,5 +1,5 @@
 import { cliOperatorMutationContext } from "../identity/cli-operator-mutation-context.js";
-import { TaskStore, COLUMNS, COLUMN_LABELS, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, resolveProjectColumnsForRoles, TERMINAL_ROLES, resolveReviewColumns, resolveTaskLifecycleColumns, resolveWorkflowIrForTask, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isValidRepoSlug, isWorkspaceTask, reconcileDeterministicDuplicate, resolveTaskGithubTracking, runDeterministicDuplicateGuard, evaluateArchiveTaskLiveness, describeArchiveLiveness, TaskIsLiveError, toRunMutationContext, mutationContextForAgent, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { isInReviewMissingWorktreeSessionStartFailure, runAiMerge, landWorkspaceTask, withWorkspaceMergeDispatchLease, installBaselineArchiveWorktreeDisposer, clearOwnedMergeStamp, reconcileUnownedStaleMergeStamp } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -1353,6 +1353,16 @@ export async function runTaskMerge(id: string, projectName?: string) {
       return;
     }
 
+    /*
+    FNXC:GrokCliRouting 2026-07-15-10:17:
+    `fn task merge` is a bare CLI door: ProjectContext only has store/path, not a live ProjectEngine, so no engine.getPluginRunner() is available. Do not invent a full PluginRunner bootstrap here (that belongs to InProcessRuntime / ProjectEngineManager). Omitting pluginRunner is intentional — grok-cli/no-key merge selections surface the dual-remediation error. Engine-backed merge already forwards this.getPluginRunner().
+
+    FNXC:GrokCliRouting 2026-08-23-16:30:
+    RESTORED, NOT REWRITTEN. FN-9167's merge-stamp work replaced this comment block wholesale while
+    leaving the behavior it documents untouched (no `pluginRunner` is forwarded below), so the
+    routing decision lost its only record. `grok-runtime-bootstrap.test.ts` pins it here for exactly
+    that reason.
+    */
     const result = await runAiMerge(mergeStore, projectPath, id, {
       onAgentText: (delta) => process.stdout.write(delta),
       signal: abortController.signal,
@@ -1574,7 +1584,10 @@ export async function runTaskArchive(id: string, projectName?: string, options: 
 export async function runTaskUnarchive(id: string, projectName?: string) {
   // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
   await withBoardWrite(projectName, { id, action: "unarchive task" }, async (context) => {
-    const task = await context.store.unarchiveTask(id);
+    const task = await context.store.unarchiveTask(
+      id,
+      mutationContextForAgent("cli", `synthetic-cli-unarchive-${id}-${Date.now()}`),
+    );
 
     console.log();
     console.log(`  ✓ Unarchived ${task.id} → ${columnLabel(task.column)}`);
@@ -1840,15 +1853,19 @@ export async function runTaskDelete(id: string, force?: boolean, allowResurrecti
     const deleteContext = cliOperatorMutationContext();
     await retryBoardCall(context, id, "delete task", () => context.store.deleteTask(id, {
       allowResurrection: allowResurrection === true,
-      auditContext: {
+      auditContext: toRunMutationContext({
         // FNXC:TaskDeleteAttribution 2026-07-26-14:30: `fn task delete` prompts a human for
         // confirmation at a terminal, so it is an operator surface, not unattributed automation.
         agentId: "cli",
         runId: `synthetic-cli-delete-${id}-${Date.now()}`,
-        callerKind: "operator-cli",
+        callerKind: "operator-cli" as const,
         // FNXC:Identity 2026-08-09-03:04: R21 — authenticated actor as its own field, read from the single resolution above.
+        /*
+        FNXC:Identity 2026-08-24-03:05:
+        4/5 wraps the delete audit carrier with `toRunMutationContext` (derives actor from agentId when absent). 5/5's explicit operator actor must win: without it, agentId "cli" would mint a fake agent actor for a human terminal delete.
+        */
         actor: deleteContext.actor,
-      },
+      }),
     }, deleteContext));
     console.log();
     console.log(`  ✓ Deleted ${id}`);

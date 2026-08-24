@@ -5,7 +5,7 @@
  */
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import { isFusionDeletableBranch, type Settings, type Task, type TaskStore } from "@fusion/core";
+import { classifyTaskBranchOrigin, isFusionDeletableBranch, type Settings, type Task, type TaskStore } from "@fusion/core";
 import {
   assertCleanBranchAtBase,
   BranchConflictError,
@@ -56,7 +56,21 @@ export async function reclaimExistingWorktree(
 ): Promise<void> {
   const targetPath = preservedWorktreeTargetPathForTask(task.id, livePath, settings, deps.rootDir);
   const normalizedPath = await deps.normalizeReclaimableWorktreePath(livePath, targetPath, task.id, settings);
-  await deps.store.updateTask(task.id, { worktree: normalizedPath, branch });
+  /*
+  FNXC:Identity 2026-08-24-02:18:
+  Branch-conflict recovery logs (reclaim, refusal, sticky) use `runContextFor` so the mutation
+  breadcrumb is attributable to the live executor run.
+
+  FNXC:Identity 2026-08-24-02:57:
+  The reclaim persist write is the same attributed mutation as the recovery log. 4/5 asserts
+  ANY_MUTATION_CONTEXT on this updateTask (engine vs operator branchWriteOrigin from #3507);
+  omitting the context would keep the provenance patch and still look unattributed.
+  */
+  await deps.store.updateTask(task.id, {
+    worktree: normalizedPath,
+    branch,
+    branchWriteOrigin: classifyTaskBranchOrigin(task, branch) === "operator-supplied" ? "operator" : "engine",
+  }, deps.runContextFor(task.id));
   const latestTask = await deps.store.getTask(task.id);
   const baseRef = await resolveDiffBaseRef(normalizedPath, latestTask.baseCommitSha);
   if (baseRef) {

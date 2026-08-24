@@ -132,6 +132,7 @@ import {
   type WorkflowIr, resolveReviewColumns,
   mutationContextForAgent,
   type RunMutationContext,
+  toRunMutationContext,
 } from "@fusion/core";
 /*
 FNXC:Identity 2026-08-09-03:04 (U18/KTD2 Stage B):
@@ -310,7 +311,7 @@ import { TRANSIENT_ERROR_PATTERNS } from "./errors/transient-error-patterns.js";
 import { resolveAgentInstructions, buildSystemPromptWithInstructions } from "./agents/agent-instructions.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { createRunAuditor, generateSyntheticRunId, toRunMutationContext, type EngineRunContext, type RunAuditor } from "./util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId, type EngineRunContext, type RunAuditor } from "./util/run-audit.js";
 import { resolveAgentActivityAttribution } from "@fusion/core";
 import { createWebFetchTool } from "./agent-tools.js";
 import {
@@ -7065,13 +7066,13 @@ export async function aiMergeTask(
   let branch = resolveTaskWorkingBranch(task);
 
   const mergeRunId = generateSyntheticRunId("merge", taskId);
-  const engineRunContext: EngineRunContext = {
+  const engineRunContext: EngineRunContext = toRunMutationContext({
     runId: mergeRunId,
     agentId: "merger",
     taskId,
     taskLineageId: task.lineageId,
     phase: "merge",
-  };
+  });
   const audit = createRunAuditor(store, engineRunContext);
   const emitReuseHandoffAuditEvent = async (
     type:
@@ -9009,7 +9010,7 @@ export async function aiMergeTask(
                 },
                 settings,
                 options,
-                { runId: mergeRunId, agentId: engineRunContext.agentId },
+                toRunMutationContext({ runId: mergeRunId, agentId: engineRunContext.agentId }),
                 fixAttempt,
                 effectiveTestCommand,
                 effectiveBuildCommand,
@@ -9164,7 +9165,7 @@ export async function aiMergeTask(
               },
               settings,
               options,
-              { runId: mergeRunId, agentId: engineRunContext.agentId },
+              toRunMutationContext({ runId: mergeRunId, agentId: engineRunContext.agentId }),
               fixAttempt,
               effectiveTestCommand,
               effectiveBuildCommand,

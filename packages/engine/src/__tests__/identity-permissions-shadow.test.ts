@@ -32,6 +32,18 @@ Two properties are guarded:
    every shipped preset, the catalog's decision matches the gate's. The comparison feeds the gate's
    OWN classification into `can()`, so it tests the (permission, disposition) mapping — not a second
    classifier agreeing with itself.
+
+FNXC:IdentityPermissions 2026-08-24-02:20:
+Core ports `classifyGitCommand` because the git-write question is the canonical proof that
+permission resolution is argument-aware and the CLI bundle inlines core alone. Duplicating a
+security classifier is a drift hazard; this corpus is the guard. If it fails, the port is
+wrong — do not "fix" it by relaxing the assertion. U19b collapses the two copies.
+
+FNXC:IdentityPermissions 2026-08-24-02:51:
+PR 3432 restack merge of identity/3-engine-src is add/add on this file. Keep BOTH the 4/5
+shadow-evaluation suites (catalog/gate disposition, proven-failing control, exempt floor, command
+corpus) AND the 3/5 argument-aware gitCases it.each plus the null-git assertion. Union into one
+file; do not drop either side's cases.
 */
 
 const GIT_COMMAND_CORPUS = [
@@ -99,6 +111,37 @@ const INVOCATION_CORPUS: { toolName: string; args: Record<string, unknown> }[] =
 
 const PRESETS: AgentPermissionPolicyPresetId[] = ["unrestricted", "approval-required", "locked-down", "custom"];
 
+const gitCases = [
+  ["git status", false, "git status"],
+  ["git diff", false, "git diff"],
+  ["git log --oneline", false, "git log"],
+  ["git show HEAD", false, "git show"],
+  ["git add .", true, "git add"],
+  ["git commit -m x", true, "git commit"],
+  ["git branch", false, "git branch"],
+  ["git branch --show-current", false, "git branch --show-current"],
+  ["git branch feature", true, "git branch"],
+  ["git branch -d feature", true, "git branch"],
+  ["git switch main", false, "git switch"],
+  ["git switch -c feature", true, "git switch -c"],
+  ["git checkout main", false, "git checkout"],
+  ["git checkout -b feature", true, "git checkout -b"],
+  ["git pull", false, "git pull"],
+  ["git pull --rebase", true, "git pull --rebase"],
+  ["git restore file.ts", false, "git restore"],
+  ["git restore --staged file.ts", true, "git restore --staged"],
+  ["git remote -v", false, "git remote -v"],
+  ["git remote add origin x", true, "git remote"],
+  ["git remote set-url origin y", true, "git remote"],
+  ["git worktree list", false, "git worktree"],
+  ["git worktree add ../x", true, "git worktree add"],
+  ["git worktree remove ../x", true, "git worktree remove"],
+  ["echo hi && git status", false, "git status"],
+  ["echo hi; git commit -m x", true, "git commit"],
+  ["echo hi | git diff", false, "git diff"],
+  ["echo hi\ngit checkout -b t", true, "git checkout -b"],
+] as const;
+
 beforeEach(() => {
   setIdentityEnabled(true);
   /*
@@ -122,6 +165,18 @@ describe("core git classifier parity", () => {
         ...(classifyGitCommand(command) ?? { null: true }),
       });
     }
+  });
+});
+
+describe("identity permissions git classifier shadow", () => {
+  it.each(gitCases)("core port agrees with the engine original for %s", (command, write, operation) => {
+    expect(classifyGitCommand(command)).toEqual({ write, operation });
+    expect(classifyGitCommandForPermissions(command)).toEqual(classifyGitCommand(command));
+  });
+
+  it("both return null when no git command is present", () => {
+    expect(classifyGitCommand("pnpm test")).toBeNull();
+    expect(classifyGitCommandForPermissions("pnpm test")).toBeNull();
   });
 });
 

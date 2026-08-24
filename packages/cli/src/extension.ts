@@ -936,6 +936,9 @@ function resolveSecretAccessPrincipal(ctx: ExtensionCallerContext):
   caller we cannot name. It must NOT fall through to the operator branch below: that branch is the
   pre-identity operator-as-absence default, and reaching it from an unresolved caller would hand a
   nameless caller the operator's approval authority.
+
+  FNXC:Identity 2026-08-24-03:05:
+  4/5 split unresolved into its own kind with `unresolved-caller-identity` at fn_secret_get. 5/5 keeps folding it here so the secrets path has one fail-closed error (`ambiguous-caller-identity`) and cannot mint a grant for a nameless caller.
   */
   if (principal.kind === "ambiguous" || principal.kind === "unresolved") return { kind: "ambiguous" };
   if (principal.kind === "operator") {
@@ -3100,7 +3103,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         allowResurrection: params.allowResurrection === true,
         removeLineageReferences: params.removeLineageReferences === true,
         removeDependencyReferences: params.removeDependencyReferences === true,
-        auditContext: {
+        auditContext: fusionCore.toRunMutationContext({
           /*
           FNXC:TaskDeleteAttribution 2026-07-26-14:30:
           `agentId` names the TOOL SURFACE, not the actor. Before callerKind/callerTaskId were
@@ -3111,7 +3114,7 @@ export default function kbExtension(pi: ExtensionAPI) {
           agentId: "pi-extension",
           runId: `synthetic-pi-delete-${params.id}-${Date.now()}`,
           taskId: callerTaskId,
-          callerKind: "agent-tool",
+          callerKind: "agent-tool" as const,
           /*
           FNXC:Identity 2026-08-09-03:04:
           R21 — the authenticated actor, resolved from the session-identity registry, kept as a
@@ -3125,9 +3128,12 @@ export default function kbExtension(pi: ExtensionAPI) {
           shaped carrier KTD2 unifies into `RunMutationContext`; while both exist, two independent
           resolutions on one delete could disagree about who did it, and the delete row is exactly
           where that must not happen.
+
+          FNXC:Identity 2026-08-24-03:05:
+          4/5 wraps this carrier with `toRunMutationContext`. The explicit actor from `resolveExtensionMutationContext` must win so agentId "pi-extension" cannot mint a fake agent actor on a refused-or-operator delete.
           */
           actor: acting.runContext.actor,
-        },
+        }),
       }, acting.runContext);
 
       return {

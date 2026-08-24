@@ -139,7 +139,7 @@ import { buildBoardWorkflowsPayload } from "./board-workflows.js";
 import { resolveNativeStructurePreview } from "../native-structure-preview.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
 import { allowsAutoMergeProcessing, computePlanApprovalFingerprint, isTaskAwaitingPlanning, isWorkspaceTask, type RunAuditEventInput } from "@fusion/core";
-import { FUSION_CLIENT_HEADER, resolveHttpDeleteCallerKind, isValidTaskBranchName, BOOTSTRAP_ACTOR_CONTEXT } from "@fusion/core";
+import { FUSION_CLIENT_HEADER, resolveHttpDeleteCallerKind, isValidTaskBranchName, BOOTSTRAP_ACTOR_CONTEXT, toRunMutationContext, mutationContextForAgent } from "@fusion/core";
 import type { RunMutationContext } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 // FNXC:TaskLookup404 2026-07-26-11:40: shared task-miss -> 404 mapping seam.
@@ -3998,7 +3998,10 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   router.post("/tasks/:id/unarchive", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const task = await scopedStore.unarchiveTask(req.params.id);
+      const task = await scopedStore.unarchiveTask(
+        req.params.id,
+        mutationContextForAgent("system", `synthetic-dashboard-unarchive-${req.params.id}-${Date.now()}`),
+      );
       res.json(task);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -7323,7 +7326,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         removeLineageReferences,
         allowResurrection,
         githubIssueAction,
-        auditContext: {
+        auditContext: toRunMutationContext({
           /*
           FNXC:TaskDeleteAttribution 2026-07-26-14:30:
           This handler used to hardcode `agentId:"system"` with no caller field, so an operator
@@ -7346,9 +7349,12 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           authorization input, which is the exact thing the trust model forbids. There is no
           authenticated HTTP actor until the identity middleware lands, so this is the bootstrap
           actor, which is honest and audit-visible as a pre-enablement write.
+
+          FNXC:Identity 2026-08-24-03:05:
+          4/5 wraps this carrier with `toRunMutationContext`. The bootstrap actor must still be explicit: without it, agentId "system" would mint a fake agent actor and hide that HTTP deletes are pre-auth.
           */
           actor: BOOTSTRAP_ACTOR_CONTEXT,
-        },
+        }),
       }, UNATTRIBUTED_MUTATION_CONTEXT);
       scheduleReleaseExecutionAgentBindings(engine, req.params.id, runtimeLogger);
       res.json(task);

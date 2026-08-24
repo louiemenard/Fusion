@@ -553,6 +553,19 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     return this.asyncLayer !== null;
   }
 
+  /**
+   * FNXC:RUFU121ProjectIdentity 2026-08-18-19:53:
+   * RUFU-121: the store's project id (injected via the AsyncDataLayer), or
+   * null when the store has no project scope (legacy/non-backend mode).
+   * Consumers: the engine task-memory-capture seam (task_completion
+   * attribution) and the dashboard chat-delete Stash sync route — both need
+   * project identity WITHOUT a central-core lookup (the dashboard route must
+   * not import @fusion/engine; the capture seam must not block on I/O).
+   */
+  public getProjectId(): string | null {
+    return this.asyncLayer?.projectId ?? null;
+  }
+
   public watcher: FSWatcher | null = null;
   public taskCache: Map<string, Task> = new Map();
   /** Per-store, bounded answer cache used only to decorate synchronous task:updated events. */
@@ -3405,8 +3418,11 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public async readPreArchiveColumnFromTaskFile(dir: string): Promise<Column | undefined> {
     return readPreArchiveColumnFromTaskFileImpl(this, dir);
   }
-  async unarchiveTask(id: string): Promise<Task> {
-    return unarchiveTaskImpl(this, id);
+  unarchiveTask(id: string, runContext: RunMutationContext): Promise<Task>;
+  /** @deprecated U18 staging overload - pass a `RunMutationContext`. Deleted in U18's final commit; unarchive log rows otherwise persist unattributed. */
+  unarchiveTask(id: string, runContext?: RunMutationContext): Promise<Task>;
+  async unarchiveTask(id: string, runContext?: RunMutationContext): Promise<Task> {
+    return unarchiveTaskImpl(this, id, runContext);
   }
   public async moveToDone(task: Task, dir: string): Promise<void> {
     return moveToDoneImpl(this, task, dir);

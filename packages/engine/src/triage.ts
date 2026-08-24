@@ -56,6 +56,8 @@ import {
   ApprovalRequestStore,
   AWAITING_APPROVAL_PAUSE_REASON,
   isEphemeralAgent,
+  toRunMutationContext,
+  actorContextForAgent,
   resolveEffectiveAgentPermissionPolicy,
   MAX_TASK_LIST_TEXT_CHARS,
   deriveFallbackTaskTitle,
@@ -264,10 +266,10 @@ import {
   buildMarkerExhaustedFailedTaskPatch,
   buildDuplicateReplanExhaustedError,
 } from "./duplicate-marker-clear.js";
-import { createRunAuditor, generateSyntheticRunId, toRunMutationContext } from "./util/run-audit.js";
+import { createRunAuditor, generateSyntheticRunId } from "./util/run-audit.js";
 import { resolveAndEmitGoalContext } from "./goals/goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./execution/session-token-usage.js";
-import { DEFAULT_PLANNING_TIMEOUT_MS, finalizePlanningSegment, startPlanningSegment, actorContextForAgent } from "@fusion/core";
+import { DEFAULT_PLANNING_TIMEOUT_MS, finalizePlanningSegment, startPlanningSegment } from "@fusion/core";
 import { collectPlanReviewFeedbackHistory, isPlanReviewRevisionLog } from "./plan-review-feedback-history.js";
 import type { AgentActionGateContext } from "./agents/agent-action-gate.js";
 import { buildAgentGatedActionSummary } from "./agents/permanent-agent-gating.js";
@@ -580,7 +582,7 @@ export class TriageProcessor {
         return latest ? { id: latest.id, status: latest.status } : null;
       },
       pauseForApproval: async ({ approvalRequestId, decision }) => {
-        await this.store.pauseTask(taskId, true, { runId, agentId: actorId, source: "triage", actor: actorContextForAgent(actorId) }, { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
+        await this.store.pauseTask(taskId, true, toRunMutationContext({ runId, agentId: actorId, source: "triage", actor: actorContextForAgent(actorId) }), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
         await this.store.logEntry(taskId, `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`, undefined, mutationContextForAgent(actorId, runId));
         if (agent && this.options.agentStore) {
           await this.options.agentStore.updateAgentState(agent.id, "paused");
@@ -2771,14 +2773,14 @@ export class TriageProcessor {
           ? await this.options.agentStore.getAgent(task.assignedAgentId).catch(() => null)
           : null;
 
-        const triageRunContext = {
+        const triageRunContext = toRunMutationContext({
           runId: generateSyntheticRunId("triage", task.id),
           agentId: assignedAgent?.id ?? "triage",
           taskId: task.id,
           taskLineageId: task.lineageId,
           phase: "plan",
           source: "triage",
-        };
+        });
 
         /*
         FNXC:WorkflowAgentRouting 2026-08-07-06:27:
@@ -2846,6 +2848,7 @@ export class TriageProcessor {
           if (routed.status === "routed") {
             assignedAgent = routed.route.agent;
             triageRunContext.agentId = assignedAgent.id;
+            triageRunContext.actor = actorContextForAgent(assignedAgent.id);
             workflowCapacityAttemptId = `${triageRunContext.runId}:${planningNode.id}`;
             workflowCapacityProjectId = this.options.agentStore.workflowProjectId ?? this.rootDir;
             /*
@@ -2965,6 +2968,11 @@ export class TriageProcessor {
                 agentName: assignedAgent.name,
                 memory: assignedAgent.memory,
               },
+              // FNXC:MemoryFocusEngine 2026-08-13-16:35 (RUFU-068): planning/triage
+              // sessions carry no per-conversation /focus topic → whole-project scope
+              // (project default). The optional focus seam stays wired so a planning
+              // conversation that later acquires a topic can scope recall.
+              focus: undefined,
             }
             : undefined),
           createWebFetchTool(),
@@ -4863,7 +4871,12 @@ export class TriageProcessor {
           removeLineageReferences: true,
           // FNXC:TaskDeleteAttribution 2026-07-26-14:30: duplicate-resolution delete is engine-driven.
           // FNXC:Identity 2026-08-09-03:04: `actor` is authenticated; `callerKind` stays attribution-only (R21).
-          auditContext: { agentId: task.assignedAgentId ?? "triage", runId: generateSyntheticRunId("triage-delete", task.id), callerKind: "engine", actor: actorContextForAgent(task.assignedAgentId ?? "triage") },
+          auditContext: toRunMutationContext({
+            agentId: task.assignedAgentId ?? "triage",
+            runId: generateSyntheticRunId("triage-delete", task.id),
+            callerKind: "engine" as const,
+            actor: actorContextForAgent(task.assignedAgentId ?? "triage"),
+          }),
         });
         if (!result.deleted) return;
         await this.store.recordActivity({
