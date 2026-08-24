@@ -17,7 +17,7 @@
  * - onTerminated: Called when a heartbeat run is terminated
  */
 
-import { DEFAULT_PROVIDER_INSTANCE_ID, type AgentStore, type AgentHeartbeatRun, type HeartbeatInvocationSource, type AgentHeartbeatConfig, type AgentBudgetStatus, type Message, type MessageStore, type TaskStore, type TaskDetail, type AgentRole, type Agent, type InboxTask, type RunMutationContext, type Settings, type AgentConfigRevision, type ReflectionStore, type ChatStore, type ChatRoom, type ChatRoomMessage, type AgentMemoryInclusionMode } from "@fusion/core";
+import { DEFAULT_PROVIDER_INSTANCE_ID, toRunMutationContext, type AgentStore, type AgentHeartbeatRun, type HeartbeatInvocationSource, type AgentHeartbeatConfig, type AgentBudgetStatus, type Message, type MessageStore, type TaskStore, type TaskDetail, type AgentRole, type Agent, type InboxTask, type RunMutationContext, type Settings, type AgentConfigRevision, type ReflectionStore, type ChatStore, type ChatRoom, type ChatRoomMessage, type AgentMemoryInclusionMode } from "@fusion/core";
 import { AutoClaimSnapshotManager, resolveFreshAutoClaimCandidates, type AutoClaimCandidate } from "./scheduling/auto-claim-snapshot.js";
 import {
   ApprovalRequestStore,
@@ -2180,21 +2180,26 @@ export class HeartbeatMonitor {
       });
 
       // Build run context for mutation correlation
-      const runContext: RunMutationContext = {
+      /*
+      FNXC:Identity 2026-08-24-02:20:
+      Heartbeat already knows the acting agent; derive `actor` rather than leaving the 1/5-required
+      field off the carrier (which fails typecheck against main).
+      */
+      const runContext: RunMutationContext = toRunMutationContext({
         runId: run.id,
         agentId,
         source,
         // FNXC:Identity 2026-08-09-03:04: a heartbeat run acts as its own agent; nothing is delegated (R28).
         actor: actorContextForAgent(agentId),
-      };
+      });
 
       // Build engine run context for audit instrumentation
-      const engineRunContext: EngineRunContext = {
+      const engineRunContext: EngineRunContext = toRunMutationContext({
         runId: run.id,
         agentId,
         source,
         phase: "heartbeat",
-      };
+      });
 
       // Create run auditor for audit trail (FN-1404)
       // Uses TaskStore.recordRunAuditEvent when available; no-ops otherwise
@@ -2803,6 +2808,11 @@ export class HeartbeatMonitor {
               agentName: agent.name,
               memory: agent.memory,
             },
+            // FNXC:MemoryFocusEngine 2026-08-13-15:57 (RUFU-068): agent heartbeat
+            // lanes are agent-scoped, not conversation-scoped; no /focus topic →
+            // whole-project scope. The optional focus seam stays wired so a heartbeat
+            // bound to a topic-scoped conversation can scope recall within the project.
+            focus: undefined,
           }));
         } catch (memorySettingsError) {
           const message = memorySettingsError instanceof Error ? memorySettingsError.message : String(memorySettingsError);

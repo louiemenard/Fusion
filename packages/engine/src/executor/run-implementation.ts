@@ -50,7 +50,6 @@ import {
   ApprovalRequestStore,
   DEFAULT_PROVIDER_INSTANCE_ID,
   RetryStormError,
-  actorContextForAgent,
   columnsWithFlag,
   isEphemeralAgent,
   resolveEphemeralTaskCreationPolicy,
@@ -313,6 +312,14 @@ export type RunImplementationDeps = {
   shouldDeferCompletionForGlobalPause: AnyFn;
   shouldDeferForHeartbeat: AnyFn;
   signalTaskComplete: AnyFn;
+  /*
+  FNXC:StashSessionCapture 2026-08-19-05:09:
+  (RUFU-122) Terminal-failure capture seam: the executor post-loop finally calls this
+  when a run exits with the task terminally failed, so failed/parked transcripts
+  reach Stash like completed ones (same capturedMemoryTaskIds gate, at most once
+  per task across both seams).
+  */
+  signalTaskTerminalFailed: AnyFn;
   terminateAllChildren: AnyFn;
   transitionReviewAddressing: AnyFn;
   tryBootstrapMisbindingRecovery: AnyFn;
@@ -424,23 +431,21 @@ export async function runImplementation(
     // Construct run context for mutation correlation
     // Use a synthetic correlation ID: task ID + timestamp + random suffix
     const syntheticRunId = generateSyntheticRunId("exec", task.id);
-    deps.currentRunContexts.set(task.id, {
+    deps.currentRunContexts.set(task.id, toRunMutationContext({
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
-      // FNXC:Identity 2026-08-15-22:52: an execution run acts as the assigned agent (or the generic executor lane); autonomous work leaves `actingFor` unset (R28).
-      actor: actorContextForAgent(task.assignedAgentId ?? "executor"),
-    });
+    }));
     // FNXC:AgentActivityStream 2026-08-09-09:09 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
     // FN-8864 durable task:started activity at the implementation entry; monitoring never blocks execution.
     try { await deps.store.recordAgentActivity({ type: "task:started", attributionClaim: resolveAgentActivityAttribution([{ id: task.assignedAgentId ?? "executor", provenance: task.assignedAgentId ? "roster" : "lane" }], "executor"), taskId: task.id, occurredAt: new Date().toISOString(), discriminator: syntheticRunId, metadata: { runId: syntheticRunId } }); } catch { /* monitoring never blocks execution */ }
 
     // Build engine run context for audit instrumentation (FN-1404)
-    const engineRunContext: EngineRunContext = {
+    const engineRunContext: EngineRunContext = toRunMutationContext({
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
       taskId: task.id,
       phase: "execute",
-    };
+    });
 
     // Create run auditor for TaskStore-backed audit emission (no-ops if store doesn't support it)
     const audit = createRunAuditor(deps.store, engineRunContext);
@@ -3871,6 +3876,30 @@ export async function runImplementation(
         } else if (latestTask.status === "failed") {
           await deps.transitionReviewAddressing(task.id, ["in-progress", "queued"], "failed");
         }
+      }
+
+      /*
+      FNXC:StashSessionCapture 2026-08-19-05:09:
+      (RUFU-122) Shared terminal-failure seam: EVERY executor exit — execution
+      failure, transient-retry exhaustion, auto-recovery parks (status "failed" +
+      paused), worktree-liveness failures, and the completion handoffs alike —
+      funnels through this finally. When the freshly-read task is terminally
+      failed, fire the transcript capture behind the SAME capturedMemoryTaskIds
+      gate the completion seam uses, so a task captured on completion can never
+      be re-captured on failure and vice versa (at most once per task). The
+      fresh getTask read is deliberate: the in-scope `task` parameter predates
+      every terminal mutation in the try body. Best-effort: a read or capture
+      failure here must never break run teardown.
+      */
+      try {
+        const terminalTask = await deps.store.getTask(task.id);
+        if (terminalTask?.status === "failed") {
+          deps.signalTaskTerminalFailed(terminalTask);
+        }
+      } catch (terminalCaptureErr: unknown) {
+        executorLog.debug(
+          `RUFU-122 terminal-failure transcript capture skipped for ${task.id}: ${terminalCaptureErr instanceof Error ? terminalCaptureErr.message : String(terminalCaptureErr)}`,
+        );
       }
 
       /*
