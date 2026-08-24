@@ -19,6 +19,14 @@ afterEach(() => {
   fixtures.splice(0).forEach((fixture) => fixture.cleanup());
 });
 
+/*
+FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+This fixture deliberately carries NO review evidence — no `repositoryScope.reviewEvidence` and no
+enabled step matching /review/i. After the two-tier gate landed, that is what keeps its review-column
+cases refused: tier 1 re-admits only a review-evidenced task, because for this shape the landing
+fence that would otherwise catch an unreviewed repository does not evaluate at all (KTD6a). The
+review-evidenced admission path is covered in `workspace-late-acquire-tiers.test.ts`.
+*/
 function task(id = "FN-9163") {
   return { id, column: "in-progress", workspaceWorktrees: {} } as any;
 }
@@ -124,7 +132,7 @@ describe.runIf(hasGit)("workspace membership acquired mid-flight", () => {
     await expect(acquire.execute("call", { repo: "repo-b" } as never)).resolves.not.toMatchObject({ isError: true });
   });
 
-  it("refuses a newly discovered repository once review or landing has begun", async () => {
+  it("refuses a newly discovered repository in review when the task is not review-evidenced", async () => {
     const currentTask = task();
     currentTask.column = "in-review";
     const acquire = toolFor(currentTask, ["repo-a", "repo-b"], async () => ["repo-a", "repo-b"]);
@@ -140,6 +148,7 @@ describe.runIf(hasGit)("workspace membership acquired mid-flight", () => {
   });
 
   it("revalidates lifecycle inside the acquisition critical section", async () => {
+    // The inner call under the acquisition lock is the authoritative one.
     const currentTask = task();
     acquisition.acquire.mockImplementation(async (options: any) => {
       currentTask.column = "in-review";

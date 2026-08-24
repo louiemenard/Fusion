@@ -33,6 +33,8 @@ import { MessageDeliveryAutoRecoveryHandler } from "./auto-recovery-handlers/mes
 import { emitGoalRetrievalAudit } from "./goals/goal-anchoring-audit.js";
 import { recordRetry } from "./errors/retry-burned-logger.js";
 import { acquireWorkspaceRepoWorktree, WorkspaceRepoAcquireBusyError } from "./worktree/worktree-acquisition.js";
+import { isCodeReviewRouteReachable, rerouteWorkspaceReviewToCodeReview } from "./merge/workspace-review-reroute.js";
+import { emitBoundedRunAudit } from "./util/emit-bounded-run-audit.js";
 import { validateCodeNodeSources } from "./execution/code-node-runner.js";
 import { resolveFeatureRepairTargets } from "./missions/mission-feature-sync.js";
 import { reconcileMissionState } from "./missions/mission-state-reconcile.js";
@@ -6558,30 +6560,106 @@ export function isLateAcquireColumnBlocked(workflowIr: fusionCore.WorkflowIr, co
 }
 
 class LateWorkspaceRepoAcquireError extends Error {
-  constructor(public readonly repo: string) {
-    super(`Cannot acquire new repository ${repo} after review or landing has started`);
+  constructor(
+    public readonly repo: string,
+    public readonly reason: Extract<WorkspaceLateAcquireDecision, { decision: "blocked" }>["reason"],
+  ) {
+    super(`Cannot acquire new repository ${repo} after review or landing has started (${reason})`);
     this.name = "LateWorkspaceRepoAcquireError";
   }
 }
 
-  /*
-  FNXC:WorkspaceLateAcquire 2026-08-20-20:37 DELIBERATE-LITERAL:
-  Late worktree acquisition is refused once the task has left the executable column set
-  (in-review — review/merge owns the worktree; done/archived — terminal) or has started
-  landing (a merging-* status, or any workspace repo with a landedSha). This is a
-  deliberate column+status+workspace condition (FN-9163, upstream 2a3150582) — reviewed
-  and intentionally kept as an honest literal for the lifecycle-column census; no single
-  role helper expresses this three-part condition without inventing a bespoke trait.
-  (2026-08-21, RUFU-146 rebase: after #3492 landed the column half is resolved by
-  isLateAcquireColumnBlocked and the three-part condition now lives in this helper.)
-  */
-async function isWorkspaceRepoLateAcquireBlocked(store: TaskStore, currentTask: import("@fusion/core").Task, repo: string): Promise<boolean> {
-  if (currentTask.workspaceWorktrees?.[repo]) return false;
-  if (["merging", "merging-pr", "merging-fix"].includes(currentTask.status ?? "")) return true;
-  if (Object.values(currentTask.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha))) return true;
+export type WorkspaceLateAcquireDecision =
+  | { decision: "allowed" }
+  | { decision: "allowed-with-review-reentry" }
+  | {
+      decision: "blocked";
+      /** Fixed reason code so the executor can tell "already landed" from "already merging". */
+      reason:
+        | "already-landed"
+        | "merging"
+        | "merge-pending"
+        | "not-a-review-column"
+        | "no-review-evidence"
+        | "no-code-review-route";
+    };
+
+/*
+FNXC:WorkspaceLateAcquire 2026-08-20-20:37 DELIBERATE-LITERAL:
+Late worktree acquisition is refused once the task has left the executable column set
+(in-review — review/merge owns the worktree; done/archived — terminal) or has started
+landing (a merging-* status, or any workspace repo with a landedSha). This is a
+deliberate column+status+workspace condition (FN-9163, upstream 2a3150582) — reviewed
+and intentionally kept as an honest literal for the lifecycle-column census; no single
+role helper expresses this three-part condition without inventing a bespoke trait.
+(2026-08-21, RUFU-146 rebase: after #3492 landed the column half is resolved by
+isLateAcquireColumnBlocked and the three-part condition now lives in this helper.)
+
+FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+R9/R10/R12/KTD6: the refusal splits in two tiers instead of being one flat "in review or later".
+Tier 2 (landing has begun) stays absolute: any repository with a `landedSha`, a merging-* or
+`workspace-review-required` status, or a merge pending/active for this task. Landing is non-atomic,
+so a scope change there cannot be undone and the follow-up-task path is the only safe answer.
+Tier 1 re-admits a task that is merely SITTING in a review column with nothing landed, because
+Fusion already owns the machinery to force a scope-changed task back through Code Review. Its three
+probes all run BEFORE acquiring:
+  - the column is explicit `resolveReviewColumns` membership, not merely "not blocked" — the literal
+    `in-review`/`done`/`archived` entries and the complete/archived flags stay in the blocked set as
+    a fail-safe, because `resolveReviewColumns` is derived purely from workflow traits and returns
+    an EMPTY list for a traitless or partly migrated IR; dropping the literals would let such a task
+    fall through both tiers into unrestricted acquisition, which is strictly worse than today.
+  - the task is review-evidenced (KTD6a). The landing fence that would otherwise catch an unreviewed
+    repository is conditional: `merger-ai` evaluates it only when the task carries
+    `repositoryScope.reviewEvidence` or an enabled step matching /review/i. For a legacy or
+    direct-caller task with neither, BOTH halves of the mitigation are absent at once and an
+    unreviewed repository would land silently, so the shape is proven at admission instead.
+  - a Code Review node is reachable (KTD7) — present AND either `defaultOn` or in the task's
+    selected `stepIds`.
+*/
+async function classifyWorkspaceRepoLateAcquire(
+  store: TaskStore,
+  currentTask: import("@fusion/core").Task,
+  repo: string,
+  isMergePendingOrActive?: (taskId: string) => boolean | Promise<boolean>,
+): Promise<WorkspaceLateAcquireDecision> {
+  if (currentTask.workspaceWorktrees?.[repo]) return { decision: "allowed" };
+  if (Object.values(currentTask.workspaceWorktrees ?? {}).some((entry) => Boolean(entry.landedSha))) {
+    return { decision: "blocked", reason: "already-landed" };
+  }
+  if (["merging", "merging-pr", "merging-fix", "workspace-review-required"].includes(currentTask.status ?? "")) {
+    return { decision: "blocked", reason: "merging" };
+  }
+  // Absent provider means "not merge-pending" — the same fail-open default self-healing takes.
+  if (await isMergePendingOrActive?.(currentTask.id) === true) {
+    return { decision: "blocked", reason: "merge-pending" };
+  }
   const workflowIr = await fusionCore.resolveWorkflowIrForTask(store, currentTask.id);
-  return isLateAcquireColumnBlocked(workflowIr, currentTask.column);
+  if (!isLateAcquireColumnBlocked(workflowIr, currentTask.column)) return { decision: "allowed" };
+
+  if (!fusionCore.resolveReviewColumns(workflowIr).includes(currentTask.column)) {
+    return { decision: "blocked", reason: "not-a-review-column" };
+  }
+  if (!isTaskReviewEvidenced(currentTask)) return { decision: "blocked", reason: "no-review-evidence" };
+  if (!await isCodeReviewRouteReachable(store, currentTask)) {
+    return { decision: "blocked", reason: "no-code-review-route" };
+  }
+  return { decision: "allowed-with-review-reentry" };
 }
+
+/** KTD6a: the shape whose landing fence actually evaluates repository review evidence. */
+function isTaskReviewEvidenced(task: import("@fusion/core").Task): boolean {
+  if (task.repositoryScope?.reviewEvidence !== undefined) return true;
+  return (task.enabledWorkflowSteps ?? []).some((step) => /review/i.test(step));
+}
+
+const LATE_ACQUIRE_REFUSAL_DETAIL: Record<Extract<WorkspaceLateAcquireDecision, { decision: "blocked" }>["reason"], string> = {
+  "already-landed": "a repository in this task has already landed",
+  merging: "this task is already merging",
+  "merge-pending": "a merge is already queued or running for this task",
+  "not-a-review-column": "this task is in a completed, archived, or non-review column",
+  "no-review-evidence": "this task carries no review evidence, so a new repository could land unreviewed",
+  "no-code-review-route": "this task's workflow has no reachable Code Review step to re-review the change",
+};
 
 export function createAcquireRepoWorktreeTool(opts: {
   workspaceRootDir: string;
@@ -6594,6 +6672,16 @@ export function createAcquireRepoWorktreeTool(opts: {
   secretsStore?: Pick<import("@fusion/core").SecretsStore, "listEnvExportable">;
   runContext?: RunMutationContext;
   audit?: Pick<RunAuditor, "git" | "filesystem">;
+  /*
+  FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+  R9/KTD16: tier 2 needs to know whether a merge is pending or active for this task, and neither
+  predicate is importable — `activeMergeTaskId` is a private ProjectEngine field and self-healing
+  only sees them because ProjectEngine pushes them onto the runtime. Reuse that same provider seam
+  rather than inventing a second one: the executor threads it here through its deps bag. An absent
+  provider means "not merge-pending", so a runtime that never wires it degrades to the status-only
+  check instead of refusing every acquisition.
+  */
+  isMergePendingOrActive?: (taskId: string) => boolean | Promise<boolean>;
   /*
   FNXC:Workspace 2026-06-21-22:30:
   F2 — executor-supplied callback invoked after a SUCCESSFUL fresh acquire so the
@@ -6608,7 +6696,7 @@ export function createAcquireRepoWorktreeTool(opts: {
   runConfiguredCommand?: import("./worktree/worktree-acquisition.js").AcquireWorkspaceRepoWorktreeOptions["runConfiguredCommand"];
   taskEnv?: NodeJS.ProcessEnv;
 }): ToolDefinition {
-  const { workspaceRootDir, workspaceRepos, resolveWorkspaceRepos, task, store, settings, logger, secretsStore, runContext, audit, onAcquired, runConfiguredCommand, taskEnv } = opts;
+  const { workspaceRootDir, workspaceRepos, resolveWorkspaceRepos, task, store, settings, logger, secretsStore, runContext, audit, onAcquired, runConfiguredCommand, taskEnv, isMergePendingOrActive } = opts;
   return {
     name: "fn_acquire_repo_worktree",
     label: "Acquire Repo Worktree",
@@ -6636,11 +6724,16 @@ export function createAcquireRepoWorktreeTool(opts: {
           isError: true,
         };
       }
-      const refuseLateAcquisition = async () => {
-        await store.logEntry(task.id, `fn_acquire_repo_worktree: refused late acquisition of ${repo}; task is already in review or landing`, undefined, runContext);
+      /*
+      FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+      R12: the refusal keeps pointing at the follow-up-task path and now names the blocking reason,
+      so the executor can tell "already landed" from "already merging" instead of retrying blind.
+      */
+      const refuseLateAcquisition = async (reason: Extract<WorkspaceLateAcquireDecision, { decision: "blocked" }>["reason"]) => {
+        await store.logEntry(task.id, `fn_acquire_repo_worktree: refused late acquisition of ${repo}; ${LATE_ACQUIRE_REFUSAL_DETAIL[reason]} (${reason})`, undefined, runContext);
         return {
-          content: [{ type: "text" as const, text: `ERROR: Cannot acquire new repository "${repo}" after review or landing has started. Create a follow-up task with fn_task_create for this repository.` }],
-          details: {},
+          content: [{ type: "text" as const, text: `ERROR: Cannot acquire new repository "${repo}": ${LATE_ACQUIRE_REFUSAL_DETAIL[reason]} (${reason}). Create a follow-up task with fn_task_create for this repository.` }],
+          details: { lateAcquireRefusalReason: reason },
           isError: true,
         };
       };
@@ -6650,9 +6743,16 @@ export function createAcquireRepoWorktreeTool(opts: {
       `in-review`/`done`/`archived` lanes. Resolve membership from the task's own workflow while
       retaining the legacy ids as a fail-safe for malformed or partially migrated task state.
       */
-      if (await isWorkspaceRepoLateAcquireBlocked(store, freshTask, repo)) {
-        return refuseLateAcquisition();
-      }
+      const outerDecision = await classifyWorkspaceRepoLateAcquire(store, freshTask, repo, isMergePendingOrActive);
+      if (outerDecision.decision === "blocked") return refuseLateAcquisition(outerDecision.reason);
+      /*
+      FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+      R11/KTD7: the reroute strictly FOLLOWS a successful acquire. The classifier runs twice — here
+      and again inside `validateTaskBeforeCreate` under the acquisition lock, where it is
+      authoritative — so a reroute-first ordering would push the task back through Code Review for a
+      repository it never acquired if a `landedSha` appeared between the two checks.
+      */
+      let requiresReviewReentry = outerDecision.decision === "allowed-with-review-reentry";
       /*
       FNXC:Workspace 2026-06-21-22:30:
       F1 — acquireWorkspaceRepoWorktree can throw WorkspaceRepoAcquireBusyError on
@@ -6677,9 +6777,9 @@ export function createAcquireRepoWorktreeTool(opts: {
           runConfiguredCommand,
           taskEnv,
           validateTaskBeforeCreate: async (latestTask) => {
-            if (await isWorkspaceRepoLateAcquireBlocked(store, latestTask, repo)) {
-              throw new LateWorkspaceRepoAcquireError(repo);
-            }
+            const innerDecision = await classifyWorkspaceRepoLateAcquire(store, latestTask, repo, isMergePendingOrActive);
+            if (innerDecision.decision === "blocked") throw new LateWorkspaceRepoAcquireError(repo, innerDecision.reason);
+            requiresReviewReentry = innerDecision.decision === "allowed-with-review-reentry";
           },
           // FNXC:WorkspaceWorktree 2026-08-22-22:16: A mid-flight scope extension joins the task's single directory unless this task is already legacy.
           ...(() => {
@@ -6691,7 +6791,7 @@ export function createAcquireRepoWorktreeTool(opts: {
         });
       } catch (err) {
         if (err instanceof LateWorkspaceRepoAcquireError) {
-          return refuseLateAcquisition();
+          return refuseLateAcquisition(err.reason);
         }
         if (err instanceof WorkspaceRepoAcquireBusyError) {
           return {
@@ -6726,6 +6826,48 @@ export function createAcquireRepoWorktreeTool(opts: {
           actor: runContext?.agentId ?? "executor",
         });
       }
+      /*
+      FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
+      R10/R11/R13: side effects are strictly ordered — acquire, record the scope extension, emit the
+      audit row, THEN reroute. A reroute failure after a successful acquire never unwinds the
+      acquisition: the worktree may already be in use by a live session. It returns a non-error
+      result naming the acquired repository and the pending review re-entry so the executor knows
+      the card still owes a Code Review pass.
+
+      The re-entry costs a FULL re-review: `mutateTaskRepositoryScope` clears the task's entire
+      `reviewEvidence` map and every superseded code-review step result is failed, so EVERY
+      repository in scope is re-reviewed, not only the new one. That price is stated to the executor
+      here and in docs/workspaces.md so the follow-up-task path stays a real alternative.
+      */
+      let reviewReentry: { rerouted: boolean; reason: string } | undefined;
+      if (requiresReviewReentry) {
+        const fresh = await store.getTask(task.id);
+        await emitBoundedRunAudit(store, {
+          domain: "database",
+          mutationType: "task:workspace-scope-extended-post-review",
+          target: task.id,
+          metadata: {
+            taskId: task.id,
+            repo,
+            column: fresh.column,
+            repositoryCount: fresh.repositoryScope?.repositories.length ?? Object.keys(fresh.workspaceWorktrees ?? {}).length,
+          },
+        }, { log: logger ? { warn: logger.warn } : undefined });
+        try {
+          reviewReentry = await rerouteWorkspaceReviewToCodeReview(store, fresh);
+        } catch (rerouteError) {
+          reviewReentry = { rerouted: false, reason: rerouteError instanceof Error ? rerouteError.message : "reroute-failed" };
+        }
+        // `rerouted` is the boolean; an `active-continuation` reason is success — a live continuation
+        // already owns the re-review, so seeding a second one would double-review the task.
+        const reentryOk = reviewReentry.rerouted || reviewReentry.reason === "active-continuation";
+        await store.logEntry(
+          task.id,
+          `fn_acquire_repo_worktree: acquired ${repo} during review and ${reentryOk ? "routed the task back through Code Review" : "could NOT seed Code Review re-entry"} (${reviewReentry.reason}); every repository in scope is re-reviewed`,
+          undefined,
+          runContext,
+        );
+      }
       // FNXC:Workspace 2026-06-21-22:30: F2 — register a freshly-acquired sub-repo worktree in the executor's activeWorktrees Set (KTD2) so owner/liveness checks see live per-repo worktrees, not just the browse-only root.
       // FNXC:Workspace 2026-06-22-09:00: register UNCONDITIONALLY, including the
       // already-acquired short-circuit. After an executor restart activeWorktrees is an
@@ -6742,9 +6884,14 @@ export function createAcquireRepoWorktreeTool(opts: {
         undefined,
         runContext,
       );
+      const reentryNote = !reviewReentry
+        ? ""
+        : reviewReentry.rerouted || reviewReentry.reason === "active-continuation"
+          ? ` This task was in review: it is routed back through Code Review and EVERY repository in scope will be re-reviewed (${reviewReentry.reason}).`
+          : ` This task was in review and the repository IS acquired, but Code Review re-entry is still pending (${reviewReentry.reason}) — it must complete before this task can land.`;
       return {
-        content: [{ type: "text" as const, text: `Worktree ready at: ${result.worktreePath} (branch: ${result.branch}, alreadyAcquired: ${result.alreadyAcquired})` }],
-        details: result,
+        content: [{ type: "text" as const, text: `Worktree ready at: ${result.worktreePath} (branch: ${result.branch}, alreadyAcquired: ${result.alreadyAcquired})${reentryNote}` }],
+        details: { ...result, ...(reviewReentry ? { reviewReentry } : {}) },
       };
     },
   };
