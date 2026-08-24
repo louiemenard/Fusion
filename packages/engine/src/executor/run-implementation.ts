@@ -50,7 +50,6 @@ import {
   ApprovalRequestStore,
   DEFAULT_PROVIDER_INSTANCE_ID,
   RetryStormError,
-  actorContextForAgent,
   columnsWithFlag,
   isEphemeralAgent,
   resolveEphemeralTaskCreationPolicy,
@@ -432,23 +431,21 @@ export async function runImplementation(
     // Construct run context for mutation correlation
     // Use a synthetic correlation ID: task ID + timestamp + random suffix
     const syntheticRunId = generateSyntheticRunId("exec", task.id);
-    deps.currentRunContexts.set(task.id, {
+    deps.currentRunContexts.set(task.id, toRunMutationContext({
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
-      // FNXC:Identity 2026-08-15-22:52: an execution run acts as the assigned agent (or the generic executor lane); autonomous work leaves `actingFor` unset (R28).
-      actor: actorContextForAgent(task.assignedAgentId ?? "executor"),
-    });
+    }));
     // FNXC:AgentActivityStream 2026-08-09-09:09 (restored 2026-08-15-22:15 after wave-18 shell-ification dropped it):
     // FN-8864 durable task:started activity at the implementation entry; monitoring never blocks execution.
     try { await deps.store.recordAgentActivity({ type: "task:started", attributionClaim: resolveAgentActivityAttribution([{ id: task.assignedAgentId ?? "executor", provenance: task.assignedAgentId ? "roster" : "lane" }], "executor"), taskId: task.id, occurredAt: new Date().toISOString(), discriminator: syntheticRunId, metadata: { runId: syntheticRunId } }); } catch { /* monitoring never blocks execution */ }
 
     // Build engine run context for audit instrumentation (FN-1404)
-    const engineRunContext: EngineRunContext = {
+    const engineRunContext: EngineRunContext = toRunMutationContext({
       runId: syntheticRunId,
       agentId: task.assignedAgentId ?? "executor",
       taskId: task.id,
       phase: "execute",
-    };
+    });
 
     // Create run auditor for TaskStore-backed audit emission (no-ops if store doesn't support it)
     const audit = createRunAuditor(deps.store, engineRunContext);
