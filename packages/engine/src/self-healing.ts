@@ -42,6 +42,7 @@ import { loadWorkspaceConfig, type TaskMoveLanes, resolveColumnFlags, IN_REVIEW_
   resolveEngineIncarnationId,
   resolveEngineNodeId,
   isFusionDeletableBranch,
+  toRunMutationContext,
 } from "@fusion/core";
 import { finalizePlanningSegment, actorContextForAgent, UNATTRIBUTED_MUTATION_CONTEXT } from "@fusion/core";
 import type { WorkspaceLandIntent } from "@fusion/core";
@@ -16103,7 +16104,16 @@ const movedTask = await this.store.moveTask(task.id, completeLane, undefined, UN
             continue;
           }
           if (resolution === "delete") {
-            await this.store.deleteTask(task.id, { removeLineageReferences: true, auditContext: { agentId: "self-healing", runId: generateSyntheticRunId("self-heal-explicit-duplicate", task.id), callerKind: "engine", /* FNXC:Identity 2026-08-09-03:04: authenticated actor, separate from the self-reported `callerKind` (R21). */ actor: actorContextForAgent("self-healing") } }, UNATTRIBUTED_MUTATION_CONTEXT);
+            await this.store.deleteTask(task.id, {
+              removeLineageReferences: true,
+              auditContext: toRunMutationContext({
+                agentId: "self-healing",
+                runId: generateSyntheticRunId("self-heal-explicit-duplicate", task.id),
+                callerKind: "engine" as const,
+                /* FNXC:Identity 2026-08-09-03:04: authenticated actor, separate from the self-reported `callerKind` (R21). */
+                actor: actorContextForAgent("self-healing"),
+              }),
+            }, UNATTRIBUTED_MUTATION_CONTEXT);
           } else if (resolution === "prompt") {
             await flagTriageDuplicate(this.store, task.id, canonicalTask.id);
             await this.store.updateTask(task.id, { paused: true, pausedReason: "duplicate-decision-required", status: null }, UNATTRIBUTED_MUTATION_CONTEXT);

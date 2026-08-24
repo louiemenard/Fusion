@@ -296,7 +296,7 @@ export function buildRunImplementationDeps(
       "shouldDeferCompletionForGlobalPause", "clearCompletedTaskWatchdog", "resolveResumeLanes",
       "transitionReviewAddressing", "buildActionGateContext", "buildPermanentAgentGatingContext",
       "resolveMcpServers", "captureModifiedFiles", "handleNonContinuableSessionError",
-      "signalTaskComplete", "getAutoRecoveryDispatcher", "registerConfiguredCommandController",
+      "signalTaskComplete", "signalTaskTerminalFailed", "getAutoRecoveryDispatcher", "registerConfiguredCommandController",
       "unregisterConfiguredCommandController", "tryBootstrapMisbindingRecovery", "addActiveWorktree",
       "getAuthoritativeAssignedAgent", "resolveSeamColumnAgent", "sendTaskBackForFix",
       "runWithExecutorSemaphore", "resetStepsIfWorkLost", "recoverMissingWorktreeSessionStartFailure",
@@ -497,8 +497,14 @@ export function buildCreateWorktreeDeps(
     maxWorktreeRetries: constants.maxWorktreeRetries,
     worktreeRetryDelaysMs: constants.worktreeRetryDelaysMs,
     tryCreateWorktree,
+    /*
+    FNXC:Identity 2026-08-24-02:18:
+    Outer createWorktree attributes squash-import, remote-rebase, start-point clear, and failure
+    logs through `runContextForTotal(deps.getRunContextFor, taskId)`. Omit this getter and those
+    writes throw or fall back instead of carrying the live run.
+    */
     ...facadeMethods(host, [
-      "resolveWorktreeStartPoint", "planSquashImportFromDep",
+      "getRunContextFor", "resolveWorktreeStartPoint", "planSquashImportFromDep",
       "squashImportDepIntoWorktree", "rebaseNewWorktreeOntoRemote",
     ]),
   };
@@ -1092,8 +1098,24 @@ export function buildSignalTaskCompleteDeps(host: any): any {
   return {
     store: host.store,
     capturedReflectionTaskIds: host.capturedReflectionTaskIds,
+    rootDir: host.rootDir,
+    capturedMemoryTaskIds: host.capturedMemoryTaskIds,
     reflectionService: host.options.reflectionService,
     onComplete: host.options.onComplete,
+  };
+}
+
+/*
+FNXC:StashSessionCapture 2026-08-19-05:09:
+(RUFU-122) Minimal deps bag for the terminal-failure transcript capture seam:
+store/rootDir plus the SAME capturedMemoryTaskIds gate the completion seam
+uses — triggerTaskMemoryCapture picks exactly the fields it needs.
+*/
+export function buildSignalTaskTerminalFailedDeps(host: any): any {
+  return {
+    store: host.store,
+    rootDir: host.rootDir,
+    capturedMemoryTaskIds: host.capturedMemoryTaskIds,
   };
 }
 
