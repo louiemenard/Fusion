@@ -2,6 +2,10 @@
  * FNXC:CloudLink 2026-08-24-00:05:
  * CLI for cloud-link Mode A — pair / complete / heartbeat / status / unlink.
  * Pending pairing is stored separately so pair-start cannot wipe a live link.
+ *
+ * FNXC:CloudLink 2026-08-24-02:17:
+ * pair-complete never reads the pairing secret from argv. The pending 0600
+ * file is the default; operators who must override set FUSION_CLOUD_PENDING_SECRET.
  */
 import {
   clearCloudLinkPending,
@@ -53,10 +57,10 @@ export async function runCloudPairStart(opts: {
 }
 
 /**
- * FNXC:CloudLink 2026-08-24-00:05:
+ * FNXC:CloudLink 2026-08-24-02:17:
  * Pending pairing is bound to the control plane that created it. If either
  * credential is loaded from the pending file, --http must match that origin
- * unless both --code and --pending-secret are supplied explicitly.
+ * unless both --code and an explicit pending secret are supplied.
  */
 export function resolveCloudPairCompleteRequest(
   opts: {
@@ -81,7 +85,7 @@ export function resolveCloudPairCompleteRequest(
     const pendingOrigin = normalizeCloudControlPlaneUrl(pending!.httpBaseUrl);
     if (pendingOrigin !== http) {
       throw new Error(
-        "Pending pairing belongs to a different Cloud URL. Omit --http, or pass both --code and --pending-secret.",
+        "Pending pairing belongs to a different Cloud URL. Omit --http, or pass both --code and FUSION_CLOUD_PENDING_SECRET.",
       );
     }
   }
@@ -89,7 +93,7 @@ export function resolveCloudPairCompleteRequest(
   const pendingSecret = opts.pendingSecret ?? pending?.pendingSecret;
   if (!code || !pendingSecret) {
     throw new Error(
-      "No pending pairing. Run fn cloud pair-start first, or pass --code and --pending-secret.",
+      "No pending pairing. Run fn cloud pair-start first, or pass --code and FUSION_CLOUD_PENDING_SECRET.",
     );
   }
   return { http, code, pendingSecret };

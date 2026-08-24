@@ -493,21 +493,41 @@ describe("bin command routing and fallbacks", () => {
       pendingSecret: undefined,
     });
 
-    await runBin([
-      "cloud",
-      "pair-complete",
-      "--http",
-      "https://cloud.example.convex.site",
-      "--code",
-      "ABCD-EFGH",
-      "--pending-secret",
-      "secret",
-    ]);
-    expect(commandMocks.runCloudPairComplete).toHaveBeenLastCalledWith({
-      http: "https://cloud.example.convex.site",
-      code: "ABCD-EFGH",
-      pendingSecret: "secret",
-    });
+    await expect(
+      runBin([
+        "cloud",
+        "pair-complete",
+        "--http",
+        "https://cloud.example.convex.site",
+        "--code",
+        "ABCD-EFGH",
+        "--pending-secret",
+        "secret",
+      ]),
+    ).rejects.toThrow("process.exit:1");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Do not pass --pending-secret"));
+    expect(commandMocks.runCloudPairComplete).toHaveBeenCalledTimes(1);
+
+    const previousSecret = process.env.FUSION_CLOUD_PENDING_SECRET;
+    process.env.FUSION_CLOUD_PENDING_SECRET = "secret-from-env";
+    try {
+      await runBin([
+        "cloud",
+        "pair-complete",
+        "--http",
+        "https://cloud.example.convex.site",
+        "--code",
+        "ABCD-EFGH",
+      ]);
+      expect(commandMocks.runCloudPairComplete).toHaveBeenLastCalledWith({
+        http: "https://cloud.example.convex.site",
+        code: "ABCD-EFGH",
+        pendingSecret: "secret-from-env",
+      });
+    } finally {
+      if (previousSecret === undefined) delete process.env.FUSION_CLOUD_PENDING_SECRET;
+      else process.env.FUSION_CLOUD_PENDING_SECRET = previousSecret;
+    }
 
     await runBin(["cloud", "heartbeat", "--url", "https://abc.trycloudflare.com", "--port", "51234"]);
     expect(commandMocks.runCloudHeartbeat).toHaveBeenCalledWith({

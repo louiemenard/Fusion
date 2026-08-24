@@ -129,6 +129,38 @@ describe("CloudLinkPresence", () => {
     await presence.stop();
   });
 
+  it("does not tight-loop when the first heartbeat fails with a live tunnel URL", async () => {
+    vi.useFakeTimers();
+    const tunnel = new FakeTunnel();
+    const heartbeat = vi.fn(async () => {
+      throw new Error("control-plane unavailable");
+    });
+    const presence = new CloudLinkPresence({
+      loadState: () => ({
+        httpBaseUrl: "https://cloud.example.convex.site",
+        engineId: "eng_1",
+        deviceSecret: "secret",
+        linkedAt: "2026-08-22T00:00:00Z",
+      }),
+      heartbeat,
+      createTunnel: () => tunnel,
+      probeCloudflared: async () => true,
+      intervalMs: 60_000,
+    });
+
+    await presence.start(51234);
+    const afterStart = heartbeat.mock.calls.length;
+    expect(afterStart).toBeGreaterThan(0);
+    expect(afterStart).toBeLessThan(8);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(heartbeat.mock.calls.length).toBe(afterStart);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(heartbeat.mock.calls.length).toBeGreaterThan(afterStart);
+    await presence.stop();
+  });
+
   it("abandons a deferred start after stop so no tunnel is left running", async () => {
     let release!: (value: boolean) => void;
     const probe = new Promise<boolean>((resolve) => {

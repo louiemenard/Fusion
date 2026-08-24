@@ -427,8 +427,8 @@ PR:
   fn mesh status [--json]              Show full mesh state
   fn cloud pair-start [--http <url>] [--name <name>]
                                       Start cloud-link pairing (prints code)
-  fn cloud pair-complete [--http <url>] [--code <code>] [--pending-secret <secret>]
-                                      Finish pairing after console claim (uses pending file if flags omitted)
+  fn cloud pair-complete [--http <url>] [--code <code>]
+                                      Finish pairing after console claim (pending file, or FUSION_CLOUD_PENDING_SECRET)
   fn cloud heartbeat [--url <origin>] [--port <n>] [--no-tunnel]
                                       One-shot publish. Without --url, start a Cloudflare tunnel until Ctrl+C. --no-tunnel publishes LAN only.
   fn cloud status [--json]             Show local cloud-link state
@@ -1180,8 +1180,9 @@ async function main() {
 
       case "cloud": {
         /*
-        FNXC:CloudLink 2026-08-24-00:05:
-        Thin client for cloud-link Mode A pairing and presence.
+        FNXC:CloudLink 2026-08-24-02:17:
+        Thin client for cloud-link Mode A pairing and presence. pair-complete
+        takes the pending secret from the 0600 pending file or FUSION_CLOUD_PENDING_SECRET, never argv.
         */
         const subcommand = args[1];
         switch (subcommand) {
@@ -1193,10 +1194,22 @@ async function main() {
             break;
           }
           case "pair-complete": {
+            /*
+             * FNXC:CloudLink 2026-08-24-02:17:
+             * `--pending-secret` is a hard error so a copied command cannot leak
+             * the credential through process listings, shell history, or terminal capture.
+             */
+            if (args.includes("--pending-secret")) {
+              console.error(
+                "Do not pass --pending-secret (it appears in process listings). Run fn cloud pair-start first, or set FUSION_CLOUD_PENDING_SECRET.",
+              );
+              process.exit(1);
+            }
+            const pendingFromEnv = process.env.FUSION_CLOUD_PENDING_SECRET?.trim();
             await runCloudPairComplete({
               http: getFlagValue(args, "--http"),
               code: getFlagValue(args, "--code"),
-              pendingSecret: getFlagValue(args, "--pending-secret"),
+              pendingSecret: pendingFromEnv || undefined,
             });
             break;
           }

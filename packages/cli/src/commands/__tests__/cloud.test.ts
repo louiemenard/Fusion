@@ -68,6 +68,14 @@ describe("runCloudHeartbeat", () => {
   });
 });
 
+describe("pair-complete CLI secret", () => {
+  it("does not read the pairing secret from argv", () => {
+    const src = readFileSync(fileURLToPath(new URL("../../bin.ts", import.meta.url)), "utf8");
+    expect(src).not.toContain('getFlagValue(args, "--pending-secret")');
+    expect(src).toContain("FUSION_CLOUD_PENDING_SECRET");
+  });
+});
+
 describe("dashboard Cloud Link teardown", () => {
   it("stops presence from disposeAsync", () => {
     const src = readFileSync(fileURLToPath(new URL("../dashboard.ts", import.meta.url)), "utf8");

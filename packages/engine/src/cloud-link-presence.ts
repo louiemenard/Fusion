@@ -170,10 +170,17 @@ export class CloudLinkPresence {
     const state = this.loadState();
     if (!state?.engineId || !state.deviceSecret) return;
     this.sending = true;
+    /*
+     * FNXC:CloudLink 2026-08-24-02:17:
+     * Immediate republish is only for a tunnel URL that rotated *during* this
+     * attempt. Comparing against lastPublishedUrl after a failure retried the
+     * same live URL in a tight loop because the first successful stamp was
+     * never written. Same-URL failures wait for the 20s interval.
+     */
+    const attemptedUrl = this.tunnel?.getStatus().url ?? null;
     try {
-      const tunnelUrl = this.tunnel?.getStatus().url ?? null;
       const candidates = buildHeartbeatCandidates({
-        tunnelUrl,
+        tunnelUrl: attemptedUrl,
         lanPort: this.port || getLocalDashboardPort(),
         now: this.now(),
       });
@@ -184,14 +191,14 @@ export class CloudLinkPresence {
         candidates,
         capabilities: { headless: true, dashboard: true },
       });
-      this.lastPublishedUrl = tunnelUrl;
+      this.lastPublishedUrl = attemptedUrl;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.log(`Heartbeat failed: ${message}`);
     } finally {
       this.sending = false;
       const live = this.tunnel?.getStatus().url ?? null;
-      if (this.running && tunnelUrlChanged(this.lastPublishedUrl, live)) {
+      if (this.running && tunnelUrlChanged(attemptedUrl, live)) {
         void this.publish();
       }
     }
