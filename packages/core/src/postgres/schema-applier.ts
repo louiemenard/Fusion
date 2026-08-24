@@ -253,7 +253,7 @@ export const REVIEW_CONVERGENCE_STAGE_VERSION = "0065";
 /** FNXC:MemoryFocus 2026-08-13-15:57: explicit registration prevents the per-conversation memory-focus migration from being skipped. Renumbered to 0060 (FN-9037 took 0059), then 0061, then 0065 (2026-08-20) when the upstream FN-066..FN-094 batch claimed 0061-0064. */
 export const CHAT_SESSION_MEMORY_FOCUS_VERSION = "0066";
 
-/** FNXC:WorkspaceWorktree 2026-08-23-19:52: R15's pinned workspace task directory segment needs its column on upgraded projects before any acquisition reads the pin. Explicit registration is required — migrations are never auto-discovered. */
+/** FNXC:WorkspaceWorktree 2026-08-24-06:10: R15's pinned workspace task directory segment needs its column on upgraded projects before any acquisition reads the pin. Explicit registration is required — migrations are never auto-discovered. */
 export const WORKSPACE_WORKTREE_DIR_SEGMENT_VERSION = "0067";
 
 /** SECURITY DEFINER helper that only inserts LEGACY_ADOPTION_DRAINED_MARKER. */
@@ -1394,7 +1394,7 @@ export async function applySchemaBaseline(
       schemaChanged = true;
     }
 
-    /* FNXC:WorkspaceWorktree 2026-08-23-19:52: register 0067 explicitly so an upgraded project gets the pinned workspace task-directory column before acquisition writes it. */
+    /* FNXC:WorkspaceWorktree 2026-08-24-06:10: register 0067 explicitly so an upgraded project gets the pinned workspace task-directory column before acquisition writes it. */
     if (!workspaceWorktreeDirSegmentAlreadyApplied) {
       const migrationSql = await readFile(WORKSPACE_WORKTREE_DIR_SEGMENT_MIGRATION_PATH, "utf8");
       await tx.execute(sql.raw(migrationSql));

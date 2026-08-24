@@ -65,7 +65,7 @@ const BOOLEAN_SETTINGS: readonly string[] = [
 const NUMBER_SETTINGS: readonly string[] = ["maxConcurrent", "maxWorktrees"];
 
 const ENUM_SETTINGS: Record<string, readonly string[]> = {
-  worktreeNaming: ["random", "task-id", "task-title"],
+  worktreeNaming: ["random", "task-id", "task-title", "branch"],
   unavailableNodePolicy: ["block", "fallback-local"],
   "worktrunk.onFailure": ["fail", "fallback-native"],
   // "auto" clears the persisted locale and reverts to runtime detection.

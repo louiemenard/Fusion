@@ -78,7 +78,7 @@ export const worktreesSearchEntries: SettingsSearchEntry[] = [
     */
     helpKey: "settings.worktrees.howToNameFreshWorktreeDirectories",
     helpFallback: "How to name fresh worktree directories. Only applies when recycling is off. Default: random.",
-    keywords: ["folder name", "directory name", "branch naming"],
+    keywords: ["folder name", "directory name", "branch naming", "ticket name", "jira", "workspace naming"],
   },
   {
     sectionId: "worktrees",

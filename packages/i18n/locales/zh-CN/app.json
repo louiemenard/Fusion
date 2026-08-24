@@ -7052,7 +7052,8 @@
       "copyFilesHelp": "",
       "namingStyleNotApplicableWhenRecycling": "",
       "howToNameFreshWorktreeDirectories": "",
-      "recycleNotApplicableWithTaskIdNaming": ""
+      "recycleNotApplicableWithTaskIdNaming": "",
+      "branchTicketEGPRD1234MySlug": ""
     },
     "fileBrowser": {
       "currentDirectory": "",

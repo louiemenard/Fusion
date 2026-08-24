@@ -1,6 +1,6 @@
 import { readdirSync } from "node:fs";
 import { existsSync } from "node:fs";
-import { classifyTaskBranchOrigin } from "@fusion/core";
+import { classifyTaskBranchOrigin, deriveWorkspaceTaskDirSegment, slugifyWorktreeSegment } from "@fusion/core";
 import type { Settings, Task, WorkspaceWorktreeContext } from "@fusion/core";
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.js";
 
@@ -73,12 +73,10 @@ export function resolveTaskWorkingBranchWithOrigin(
  * - Trim leading/trailing hyphens
  */
 export function slugify(str: string): string {
-  return str
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "") // Remove special characters except spaces and hyphens
-    .replace(/\s+/g, "-") // Replace spaces with hyphens
-    .replace(/-+/g, "-") // Collapse multiple hyphens
-    .replace(/^-|-$/g, ""); // Trim leading/trailing hyphens
+  // FNXC:WorkspaceWorktree 2026-08-24-06:11: one slug implementation, shared with core's workspace
+  // task-directory derivation, so a single-repository worktree and a workspace task directory can
+  // never drift apart in spelling for the same input.
+  return slugifyWorktreeSegment(str);
 }
 
 /**
@@ -145,7 +143,7 @@ export function generateReservedWorktreeName(
  * so both allocate via the same collision rules.
  */
 export function planTaskWorktreePath(
-  task: { id: string; title?: string | null; description: string; worktree?: string | null },
+  task: { id: string; title?: string | null; description: string; worktree?: string | null; branch?: string | null; branchContext?: Task["branchContext"] },
   rootDir: string,
   naming: string | undefined,
   reservedNames: Set<string>,
@@ -165,6 +163,20 @@ export function planTaskWorktreePath(
       break;
     case "task-title":
       worktreeName = slugify(task.title || task.description.slice(0, 60));
+      break;
+    /*
+    FNXC:WorkspaceWorktree 2026-08-24-06:11:
+    R14: the single-repository path honors "branch" through the same degrade-never-reject ladder as
+    the workspace path, so selecting the mode cannot silently fall through to a random name. An
+    unusable branch slug lands on the task id rather than failing dispatch.
+    */
+    case "branch":
+      worktreeName = deriveWorkspaceTaskDirSegment({
+        taskId: task.id,
+        worktreeNaming: "branch",
+        branch: resolveTaskWorkingBranch({ id: task.id, branch: task.branch ?? undefined, branchContext: task.branchContext }),
+        siblingSegments: reservedNames,
+      }).segment;
       break;
     case "random":
     default:

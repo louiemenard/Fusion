@@ -200,17 +200,25 @@ export function WorktreesSection({ form, setForm, gitRemotes, worktrunkInstall, 
           label: t("settings.worktrees.worktreeNamingStyle", "Worktree Naming Style"),
           help: form.recycleWorktrees
             ? t("settings.worktrees.namingStyleNotApplicableWhenRecycling", "Naming style is not applicable when recycling worktrees \u2014 pooled worktrees retain their existing names. \"Task ID\" is unavailable here because task-pinned worktrees are mutually exclusive with recycling; turn off Recycle worktrees to use it.")
-            : t("settings.worktrees.howToNameFreshWorktreeDirectories", "How to name fresh worktree directories. Only applies when recycling is off. \"Task ID\" also pins each task to its own worktree directory for its whole lifecycle (mutually exclusive with recycling). Default: random."),
+            : t("settings.worktrees.howToNameFreshWorktreeDirectories", "How to name fresh worktree directories. Only applies when recycling is off. \"Task ID\" also pins each task to its own worktree directory for its whole lifecycle (mutually exclusive with recycling). \"Branch / ticket\" names the directory after the working branch, dropping its namespace, so a JIRA-derived branch names the checkout after its ticket; it is the only mode that also names workspace-project checkouts. Default: random."),
           scope: "project",
           disabled: form.recycleWorktrees,
           options: [
             { value: "random", label: t("settings.worktrees.randomNamesEGSwiftFalcon", "Random names (e.g., swift-falcon)") },
             { value: "task-id", label: t("settings.worktrees.taskIDEGFN042", "Task ID (e.g., FN-042)") },
             { value: "task-title", label: t("settings.worktrees.taskTitleEGFixLoginBug", "Task title (e.g., fix-login-bug)") },
+            /*
+            FNXC:WorkspaceWorktree 2026-08-24-06:11:
+            R14: "Branch / ticket" is the mode that makes a workspace project's checkouts carry the
+            ticket they serve — every other mode leaves a workspace task on its task id. It reuses
+            this existing setting rather than adding a key, so it inherits this select's
+            recycling-disabled state instead of introducing a second write boundary.
+            */
+            { value: "branch", label: t("settings.worktrees.branchTicketEGPRD1234MySlug", "Branch / ticket (e.g., prd-1234-my-slug)") },
           ],
         }}
         value={form.worktreeNaming || "random"}
-        onChange={(v) => setForm((f) => ({ ...f, worktreeNaming: v as "random" | "task-id" | "task-title" }))}
+        onChange={(v) => setForm((f) => ({ ...f, worktreeNaming: v as "random" | "task-id" | "task-title" | "branch" }))}
       />
       <div className="form-group">
         {/* FNXC:SettingsHelp 2026-07-15-21:40: The help swaps to the worktrunk-disabled explanation, so the tip is what tells an operator why the input is greyed out; it stays on the same "?" as every other row rather than becoming a second inline idiom. */}
