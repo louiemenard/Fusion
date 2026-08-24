@@ -69,6 +69,7 @@ import {
   type TaskStore,
   type WorkspaceLeaseHandle,
   resolveReviewColumns,
+  requiresRepositoryReviewEvidence as requiresTaskRepositoryReviewEvidence,
 } from "@fusion/core";
 import { selectUserCommentsForAgentContext } from "../agents/agent-user-comments.js";
 import { resolveTaskWorkingBranch } from "../worktree/worktree-names.js";
@@ -2291,8 +2292,7 @@ export async function landWorkspaceTask(
   they retain the established merge-agent review path; a present-but-incomplete evidence map never
   downgrades that fence.
   */
-  const requiresRepositoryReviewEvidence = approvedReviewEvidence !== undefined
-    || (mergeBoundaryTask.enabledWorkflowSteps ?? []).some((step) => /review/i.test(step));
+  const requiresRepositoryReviewEvidence = requiresTaskRepositoryReviewEvidence(mergeBoundaryTask);
   const approvalMissingRepositories = Object.entries(mergeBoundaryFingerprints)
     .filter(([repoRel]) => requiresRepositoryReviewEvidence && !approvedReviewEvidence?.[repoRel])
     .map(([repoRel]) => repoRel)

@@ -2001,13 +2001,16 @@ async function ensureWorkspaceTaskDirSegmentPin(input: {
   sibling list degrades to "no siblings" rather than failing the acquisition, since the collision
   check is a convenience guard and the reservation layer still refuses a duplicate path.
   */
+  // Only a name-bearing mode can collide with a sibling, so the project-wide read is skipped for the
+  // task-id and random modes — i.e. for every project that has not opted into ticket-derived names.
+  const namesFromTask = input.settings.worktreeNaming === "branch" || input.settings.worktreeNaming === "task-title";
   const { segment, fallbackReason } = deriveWorkspaceTaskDirSegment({
     taskId: input.task.id,
     worktreeNaming: input.settings.worktreeNaming,
     branch: input.namingBranch,
     title: input.task.title,
     description: input.task.description,
-    siblingSegments: await collectLiveSiblingTaskDirSegments(input.store, input.task.id),
+    siblingSegments: namesFromTask ? await collectLiveSiblingTaskDirSegments(input.store, input.task.id) : undefined,
   });
   await input.store.updateTask(input.task.id, { workspaceWorktreeDirSegment: segment }, input.runContext);
   input.logger?.log(`${input.task.id}: pinned workspace worktree directory segment ${segment}`);
@@ -2069,13 +2072,19 @@ export async function acquireWorkspaceTaskWorktrees(
     throw new Error(`Workspace task ${opts.task.id} requested an undeclared repository`);
   }
 
-  const preNormalizationTask = await opts.store.getTask(opts.task.id);
+  /*
+  FNXC:WorkspaceWorktree 2026-08-24-06:11:
+  The naming branch must be read BEFORE `normalizeWorkspaceTaskRouting` clears the singular
+  `task.branch`, but only a task with no pin will ever consume it — so an already-pinned task (every
+  re-acquisition, and every repository after the first) skips this read entirely.
+  */
+  const preNormalizationTask = opts.task.workspaceWorktreeDirSegment ? undefined : await opts.store.getTask(opts.task.id);
   let current = await normalizeWorkspaceTaskRouting(opts.store, opts.task.id);
   // Validate a durable remediation target without allowing it to choose session cwd.
   resolveWorkspaceReviewRemediationRepository(current, repoRelPaths);
   current = await ensureWorkspaceTaskDirSegmentPin({
     task: current,
-    namingBranch: resolveWorkspaceNamingBranch(preNormalizationTask),
+    namingBranch: resolveWorkspaceNamingBranch(preNormalizationTask ?? opts.task),
     store: opts.store,
     settings: opts.settings,
     logger: opts.logger,
