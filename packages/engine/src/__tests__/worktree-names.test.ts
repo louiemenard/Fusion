@@ -117,7 +117,8 @@ worktree-acquisition-workspace.test.ts. The fallback ladder is shared with the w
 these cases pin the wiring and the degradation, not the slug algorithm.
 */
 describe("planTaskWorktreePath branch naming", () => {
-  const rootDir = "/tmp/fn-branch-naming-root";
+  // Pure string fixture: planTaskWorktreePath only composes a path, it never creates one.
+  const rootDir = "/repos/fn-branch-naming-root";
   const task = (overrides: Record<string, unknown> = {}) => ({
     id: "FN-9300",
     title: "A title",
@@ -157,7 +158,7 @@ describe("planTaskWorktreePath branch naming", () => {
   });
 
   it("reuses an already-assigned worktree regardless of mode", () => {
-    expect(planTaskWorktreePath(task({ worktree: "/tmp/existing/dir" }), rootDir, "branch", new Set()))
-      .toBe("/tmp/existing/dir");
+    expect(planTaskWorktreePath(task({ worktree: "/repos/existing/dir" }), rootDir, "branch", new Set()))
+      .toBe("/repos/existing/dir");
   });
 });
