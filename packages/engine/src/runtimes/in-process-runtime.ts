@@ -39,7 +39,7 @@ import { TaskExecutor, type TaskExecutorOptions } from "../executor.js";
 import { buildPrNodeDeps } from "../merge/pr-nodes.js";
 import { isExperimentalFeatureEnabled } from "@fusion/core";
 import { createCliAgentRuntime, type BootstrappedCliAgentRuntime } from "../cli-agent/runtime.js";
-import { WorktreePool, detectGitRepository, type GitRepoDetection, type PoolInvariantViolation } from "../worktree/worktree-pool.js";
+import { detectGitRepository, type GitRepoDetection } from "../worktree/worktree-pool.js";
 import type { PlanningHandoffOutcome } from "../triage.js";
 import { HeartbeatMonitor, HeartbeatTriggerScheduler, type WakeContext } from "../agent-heartbeat.js";
 import { AutoClaimSnapshotManager } from "../scheduling/auto-claim-snapshot.js";
@@ -68,7 +68,7 @@ import { MissionExecutionLoop } from "../missions/mission-execution-loop.js";
 import { TriageProcessor } from "../triage.js";
 import { validateProjectNodeMapping } from "../project/node-dispatch-validation.js";
 import { attachAgentLinkSync } from "../agents/task-agent-sync.js";
-import { createRunAuditor, generateSyntheticRunId } from "../util/run-audit.js";
+import { generateSyntheticRunId } from "../util/run-audit.js";
 import { emitBoundedRunAudit } from "../util/emit-bounded-run-audit.js";
 import { setImmediate as setImmediateCb } from "node:timers";
 import { seedPreReleasePlanReviewContinuation, type PlanReviewSeedBailReason } from "../plan-review-continuation.js";
@@ -804,7 +804,7 @@ export function buildCliAgentAwaitingInputNotificationPayload(input: {
  * InProcessRuntime runs a project within the main process.
  *
  * This is the default execution mode — all components (TaskStore, Scheduler,
- * Executor, WorktreePool) share the same memory space and event loop.
+ * Executor) share the same memory space and event loop.
  *
  * Features:
  * - Direct access to TaskStore and Scheduler via getter methods
@@ -888,7 +888,6 @@ export class InProcessRuntime
   private backendShutdown?: () => Promise<void>;
   private scheduler!: Scheduler;
   private executor!: TaskExecutor;
-  private worktreePool!: WorktreePool;
   /*
   FNXC:CapacityModel 2026-07-28-20:10 (drop the cross-project cap):
   The global and project-scoped semaphores are DELETED. Capacity is two numbers
@@ -996,10 +995,9 @@ export class InProcessRuntime
    *
    * Initialization order:
    * 1. Initialize TaskStore
-   * 2. Initialize WorktreePool
-   * 3. Initialize Scheduler (with TaskStore)
-   * 4. Initialize TaskExecutor (with TaskStore, worktree pool, global semaphore)
-   * 5. Resume orphaned in-progress tasks
+   * 2. Initialize Scheduler (with TaskStore)
+   * 3. Initialize TaskExecutor (with TaskStore and global semaphore)
+   * 4. Resume orphaned in-progress tasks
    * 6. Start scheduler
    */
   async start(): Promise<void> {
@@ -1181,15 +1179,9 @@ export class InProcessRuntime
 
       await yieldEventLoop();
 
-      // 3. Initialize WorktreePool
-
-      // Reap half-initialized orphan worktree directories before doing anything
-      // else with the pool.  These are directories under .worktrees/ that exist
-      // on disk but were never fully registered with git (e.g. the process was
-      // killed between `mkdir` and `git worktree add`).  Removing them here
-      // ensures scanIdleWorktrees / rehydrate never sees broken entries, and
-      // prevents assertValidWorktreeSession from permanently blocking retries.
-      const { reapOrphanWorktrees, scanIdleWorktrees } = await import("../worktree/worktree-pool.js");
+      // Reap half-initialized orphan worktree directories before execution.
+      // This recovery is independent of the retired recycle pool.
+      const { reapOrphanWorktrees } = await import("../worktree/worktree-pool.js");
       const settings = await this.taskStore.getSettings();
       try {
         const reaped = await reapOrphanWorktrees(this.config.workingDirectory, settings);
@@ -1211,21 +1203,6 @@ export class InProcessRuntime
         );
       } else if (gitDetection.status === "error") {
         runtimeLog.warn(formatRuntimeGitDetectionWarning(this.config.workingDirectory, gitDetection));
-      }
-
-      this.worktreePool = new WorktreePool();
-
-      // Rehydrate pool from disk state (idle worktrees)
-      const idleWorktrees = await scanIdleWorktrees(
-        this.config.workingDirectory,
-        this.taskStore,
-        settings,
-      );
-      if (idleWorktrees.length > 0) {
-        this.worktreePool.rehydrate(idleWorktrees);
-        runtimeLog.log(
-          `Rehydrated worktree pool with ${idleWorktrees.length} idle worktrees`
-        );
       }
 
       await yieldEventLoop();
@@ -1366,6 +1343,10 @@ export class InProcessRuntime
         // triageProcessor is constructed after the scheduler but exists by the
         // time the first scheduling pass runs.
         getInFlightTopLevelCount: () => this.triageProcessor?.getProcessingTaskIds().size ?? 0,
+        // Planning and execution share project admission capacity; this callback only nudges discovery.
+        onCapacityReleased: () => {
+          this.triageProcessor?.requestImmediatePoll();
+        },
         agentStore: this.agentStore,
         hasActiveAgentExecution: (agentId: string) => this.heartbeatMonitor?.getTrackedAgents().includes(agentId) ?? false,
         missionStore,
@@ -1435,15 +1416,11 @@ export class InProcessRuntime
       // 5b. Initialize TaskExecutor
       this.stuckTaskDetector = new StuckTaskDetector(this.taskStore, {
         isCliSessionWaitingOnInput: this.cliAgentRuntime?.isCliSessionWaitingOnInput,
-        beforeRequeue: (taskId, reason, event) => this.selfHealingManager?.checkStuckBudget(taskId, reason, event) ?? Promise.resolve(true),
         onLoopDetected: (event) => this.executor?.handleLoopDetected(event) ?? Promise.resolve(false),
         onStuck: (event) => {
           this.triageProcessor?.markStuckAborted(event.taskId);
-          this.executor?.markStuckAborted(event.taskId, event.shouldRequeue);
-          runtimeLog.warn(
-            `Task ${event.taskId} stuck (${event.reason}) — ` +
-            `${event.shouldRequeue ? "will retry" : "budget exhausted"}`,
-          );
+          this.executor?.markStuckAborted(event.taskId);
+          runtimeLog.warn(`Task ${event.taskId} stuck (${event.reason}) — resuming in place`);
         },
       });
 
@@ -1538,7 +1515,6 @@ export class InProcessRuntime
         receive — an executor without it can no longer run any classified node at all.
         */
         agentStore: this.agentStore,
-        pool: this.worktreePool,
         usageLimitPauser: this.usageLimitPauser,
         credentialRotator: this.credentialRotator,
         stuckTaskDetector: this.stuckTaskDetector,
@@ -1622,33 +1598,6 @@ export class InProcessRuntime
       if (this.mergeRequester) {
         this.executor.setMergeRequester(this.mergeRequester);
       }
-
-      this.worktreePool.setInvariantViolationHandler((violation: PoolInvariantViolation) => {
-        void (async () => {
-          try {
-            runtimeLog.warn(
-              `[worktree-pool] invariant violation detected (${violation.phase}) path=${violation.path} holder=${violation.existingHolder} requester=${violation.requestingTaskId}`,
-            );
-            const audit = createRunAuditor(this.taskStore, {
-              runId: generateSyntheticRunId("worktree-pool-invariant", violation.requestingTaskId),
-              taskId: violation.requestingTaskId,
-              agentId: "system",
-              phase: "execute",
-            });
-            await audit.database({
-              type: "worktree:pool-double-lease-detected",
-              target: violation.path,
-              metadata: violation,
-            });
-            await this.taskStore.logEntry(
-              violation.requestingTaskId,
-              `Worktree pool invariant violation (${violation.phase}): ${violation.path} is held by ${violation.existingHolder}`, undefined, UNATTRIBUTED_MUTATION_CONTEXT,
-            );
-          } catch (error) {
-            runtimeLog.warn(`Failed to process worktree pool invariant violation: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        })();
-      });
 
       await yieldEventLoop();
 
@@ -1833,6 +1782,10 @@ export class InProcessRuntime
           onSpecifyError: (t, e) => {
             runtimeLog.error(`Triage failed for ${t.id}: ${e.message}`);
           },
+          // Planning and execution share project admission capacity; this callback only nudges discovery.
+          onPlanningSlotReleased: () => {
+            void this.scheduler?.schedule();
+          },
         },
       );
 
@@ -1926,7 +1879,7 @@ export class InProcessRuntime
         recoverCompletedTask: (task) => this.executor.recoverCompletedTask(task),
         recoverFailedPreMergeStep: (task) => this.executor.recoverFailedPreMergeWorkflowStep(task),
         getExecutingTaskIds: () => this.executor?.getExecutingTaskIds() ?? new Set<string>(),
-        clearPhantomExecutorBinding: (taskId: string, options?: { preserveWorktrees?: boolean }) => this.executor?.clearPhantomExecutorBinding(taskId, options),
+        clearPhantomExecutorBinding: (taskId: string, options?: { preserveWorktrees?: boolean; externallyBlocked?: boolean }) => this.executor?.clearPhantomExecutorBinding(taskId, options),
         /*
         FNXC:NodeWorktreeIsolation 2026-07-29-06:05 (FN-6756):
         Wire the read-only liveness probe. self-healing.ts's own comment records that
@@ -2391,14 +2344,6 @@ export class InProcessRuntime
         unregisterDefaultAgentPluginRunner(this.config.workingDirectory);
         await this.pluginRunner.shutdown();
         runtimeLog.log("PluginRunner shutdown complete");
-      }
-
-      // 9. Drain and cleanup worktree pool
-      if (this.worktreePool) {
-        const worktrees = this.worktreePool.drain();
-        if (worktrees.length > 0) {
-          runtimeLog.log(`Drained ${worktrees.length} worktrees from pool`);
-        }
       }
 
       this.leaseCentralClaimStore = undefined;

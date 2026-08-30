@@ -83,6 +83,7 @@ export async function parkCompletedBlockedTask(
       preserveResumeState: true,
       preserveWorktree: true,
       moveSource: "engine",
+      lifecycleReason: "self-healing-stranded-recovery",
       recoveryRehome: true,
     }, deps.runContextFor(task.id));
   }
