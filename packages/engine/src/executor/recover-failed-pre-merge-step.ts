@@ -29,7 +29,7 @@
  * graph executor's signature guard rather than this budget check.
  */
 import type { Task, TaskStore, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
-import { hasPreMergeRemediationAutoMergeHold } from "@fusion/core";
+import { hasPreMergeRemediationAutoMergeHold, resolveStepReopenPolicy, resolveWorkflowIrForTask } from "@fusion/core";
 import { executorLog } from "../logger.js";
 import type { EngineRunContext } from "../util/run-audit.js";
 import { routeReviewConvergenceLadder } from "./review-convergence-ladder.js";
@@ -53,6 +53,8 @@ export type RecoverFailedPreMergeStepDeps = {
     mergeVerificationFailure?: boolean,
     retryPresentation?: { attempt: number; max?: number },
     findings?: CoreWorkflowStepResult["findings"],
+    persistWorktreePath?: boolean,
+    stepReopenPolicy?: "reopen-trailing" | "none",
   ) => Promise<void>;
 };
 
@@ -160,6 +162,7 @@ export async function recoverFailedPreMergeWorkflowStep(
       return false;
     }
 
+    const workflowIr = await resolveWorkflowIrForTask(deps.store, task.id).catch(() => undefined);
     await deps.sendTaskBackForFix(
       task,
       task.worktree ?? "",
@@ -177,6 +180,8 @@ export async function recoverFailedPreMergeWorkflowStep(
        * restart-recovered bounce indistinguishable from a live one.
        */
       target.findings,
+      undefined,
+      resolveStepReopenPolicy(workflowIr),
     );
     return true;
   } catch (err: unknown) {
