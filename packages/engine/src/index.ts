@@ -1,6 +1,15 @@
 export { AgentLogger, type AgentLoggerOptions, summarizeToolArgs } from "./agents/agent-logger.js";
-export { PlanningResetFence, PLANNING_RESET_HOLD_MS } from "./planning-reset-fence.js";
-export { removeTaskResetWorktree, ResetWorktreeForeignSessionError } from "./worktree/remove-reset-worktree.js";
+export { isPlanningResetHoldClearingUpdate, PlanningResetFence, PLANNING_RESET_HOLD_MS } from "./planning-reset-fence.js";
+export { reconcileTaskResetSessionRoot, removeTaskResetWorktree, ResetWorktreeForeignSessionError } from "./worktree/remove-reset-worktree.js";
+export {
+  deleteTaskResetBranches,
+  planTaskResetBranchCleanup,
+  type TaskResetBlockedBranch,
+  type TaskResetBranchCleanupInput,
+  type TaskResetBranchCleanupOutcome,
+  type TaskResetDeletedBranch,
+  type TaskResetRetainedBranch,
+} from "./worktree/reset-branch-cleanup.js";
 export { ActiveSessionWorktreeRemovalError } from "./worktree/worktree-backend.js";
 export { planningLivenessRegistry, registerPlanningLivenessProbe, isPlanningLive } from "./agents/planning-liveness.js";
 export {
@@ -57,6 +66,7 @@ export {
   createTaskListTool,
   createTaskShowTool,
   createTaskSearchTool,
+  createPatchnodeReadTool,
   createTaskReadTools,
   createListAgentsTool,
   createDelegateTaskTool,
@@ -79,6 +89,8 @@ export {
   createTaskLogTool,
   createTaskLogsReadTool,
   normalizeAgentLogPaging,
+  AGENT_LOG_READ_DETAIL_PREVIEW_MAX,
+  buildTaskAgentLogReadText,
   renderAgentLogEntries,
   createSendMessageTool,
   createReadMessagesTool,
@@ -189,6 +201,7 @@ export { TriageProcessor, type TriageProcessorOptions } from "./triage.js";
 export { TaskExecutor, type TaskExecutorOptions } from "./executor.js";
 export {
   WorkflowGraphExecutor,
+  resolveColumnResumeNode,
   type WorkflowGraphExecutorDeps,
   type WorkflowGraphExecutorResult,
 } from "./workflows/workflow-graph-executor.js";
@@ -676,10 +689,10 @@ export {
 } from "./providers/index.js";
 export { activeSessionRegistry } from "./agents/active-session-registry.js";
 export {
-  WorktreePool,
   scanIdleWorktrees,
   cleanupOrphanedWorktrees,
   reapOrphanWorktrees,
+  getRegisteredWorktreePaths,
   getRegisteredWorktreeBranches,
 } from "./worktree/worktree-pool.js";
 export { removeWorktree, RemovalReason, type RemovalReason as WorktreeRemovalReason, type WorktreeRemoveOutcome } from "./worktree/worktree-backend.js";
@@ -701,7 +714,7 @@ export {
   type BranchConflictInspectionResult,
   type InspectBranchConflictInput,
 } from "./execution/branch-conflicts.js";
-export { generateReservedWorktreeName, generateWorktreeName, planTaskWorktreePath, slugify } from "./worktree/worktree-names.js";
+export { planTaskWorktreePath } from "./worktree/worktree-names.js";
 export { deriveJiraBranchName, normalizeJiraIssueKey } from "./worktree/jira-branch-name.js";
 export type { JiraBranchNameResult } from "./worktree/jira-branch-name.js";
 export { createLogger, type Logger } from "./logger.js";
