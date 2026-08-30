@@ -140,7 +140,6 @@ import { runSurfacingSweep, hours, type SurfacingCycle } from "./surfacing-sweep
    self-healing-git-evidence.ts. Imported back here because call sites remain. */
 import { SelfHealingGitEvidence, execAsync, shellQuote } from "./self-healing-git-evidence.js";
 import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./agents/task-agent-sync.js";
-import { describeSelfHealingNoActionWedge } from "./notification/task-wedge-notification.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./healing/recovery-policy.js";
 
 type FileScopeLeaseTaskRoles = {
