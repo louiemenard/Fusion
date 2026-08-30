@@ -101,7 +101,7 @@ afterEach(() => {
 });
 
 describe("executor outer dispatch dependency gate", () => {
-  it("requeues a live dependency before any execution surface can run", async () => {
+  it("holds a live dependency in place before any execution surface can run", async () => {
     resetExecutorMocks();
     const child = task();
     const parent = task({ id: "FN-PARENT", column: "in-progress", dependencies: [] });
@@ -115,12 +115,7 @@ describe("executor outer dispatch dependency gate", () => {
 
     await executor.execute(child);
 
-    expect(store.moveTask).toHaveBeenCalledWith(child.id, "todo", expect.objectContaining({
-      preserveProgress: true,
-      preserveWorktree: true,
-      preserveResumeState: true,
-      recoveryRehome: true,
-    }), ANY_MUTATION_CONTEXT);
+    expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.transitionQueuedEpisode).toHaveBeenCalledWith(child.id, expect.objectContaining({
       signature: "dependency:FN-PARENT",
       blockedBy: parent.id,
