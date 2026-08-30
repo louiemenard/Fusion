@@ -1,6 +1,6 @@
-import type { ChatInFlightGenerationState, ChatMessage, ResolvedModelSelection, Task, TaskDetail } from "@fusion/core";
+import type { ChatInFlightGenerationState, ChatMessage, ResolvedModelSelection, Settings, Task, TaskDetail } from "@fusion/core";
 import { isWipColumnRole } from "../utils/columnRoles";
-import { getErrorMessage } from "@fusion/core";
+import { getErrorMessage, isExperimentalFeatureEnabled, CHAT_FOCUS_FLAG } from "@fusion/core";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -9,21 +9,21 @@ import { useComposerDictation } from "../hooks/useComposerDictation";
 import { getPersistedPendingChatMessages, setPersistedPendingChatMessages } from "../hooks/chatPendingMessageStorage";
 import { MicButton } from "./MicButton";
 import type { ChatMessageInfo, ToolCallInfo } from "../hooks/chatTypes";
-import { attachChatStream, cancelChatResponse, ensureTaskPlannerChatSession, fetchChatMessages, fetchChatSession, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse, updateChatSession, type ChatFailureInfo, type ChatStreamErrorMeta } from "../api";
+import { attachChatStream, cancelChatResponse, ensureTaskPlannerChatSession, fetchChatMessages, fetchChatSession, fetchSettings, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse, updateChatSession, type ChatFailureInfo, type ChatStreamErrorMeta } from "../api";
 import { parseQuestionToolCall, type ParsedQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import { PendingChatMessageQueue } from "./PendingChatMessageQueue";
 import { ProviderIcon } from "./ProviderIcon";
-import { CustomModelDropdown } from "./CustomModelDropdown";
 import { ChatThinkingLevelControl } from "./ChatThinkingLevelControl";
 import { useModelsCache } from "../hooks/useModelsCache";
 import { StandardChatActionButton, StandardChatMessageItem, StandardStreamingMessage, formatModelTag } from "./StandardChatSurface";
-import { CHAT_COMMANDS, filterChatCommands, getSlashTriggerMatch, matchChatCommand, type ChatCommand } from "./chat-commands";
+import { filterChatCommands, getSlashTriggerMatch, matchChatCommand, selectChatCommands, type ChatCommand } from "./chat-commands";
 import { useChatMessageLayout } from "../context/ChatMessageLayoutContext";
 import {
   createChatInputAutosizeController,
   type ChatInputAutosizeController,
 } from "../utils/chatInputAutosize";
+import { ChatFocusSelector } from "./ChatFocusSelector";
 import "./TaskPlannerChatTab.css";
 
 interface TaskPlannerChatTabProps {
@@ -333,6 +333,14 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   const { t } = useTranslation("app");
   const chatMessageLayout = useChatMessageLayout();
   const [sessionId, setSessionId] = useState<string | null>(null);
+  /*
+  FNXC:ChatMemoryFocus 2026-08-13:
+  RUFU-068: local mirror of chat_sessions.memory_focus for the planner-chat composer. Read
+  once at session load and updated by ChatFocusSelector.onPersist so the chip reflects the
+  persisted per-conversation focus without a full session refetch.
+  */
+  const [sessionMemoryFocus, setSessionMemoryFocus] = useState<string | null>(null);
+  const [chatSettings, setChatSettings] = useState<Settings | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingMessages, setPendingMessages] = useState<string[]>([]);
@@ -379,6 +387,23 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     taskChatModelRef.current = taskChatModel;
   }, [addToast, onTaskUpdated, taskChatModel]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setChatSettings(null);
+    fetchSettings(projectId)
+      .then((settings) => {
+        if (!cancelled) setChatSettings(settings);
+      })
+      .catch(() => {
+        if (!cancelled) setChatSettings(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const chatFocusEnabled = isExperimentalFeatureEnabled(chatSettings ?? undefined, CHAT_FOCUS_FLAG);
+  const selectedChatCommands = useMemo(() => selectChatCommands({ chatFocusEnabled }), [chatFocusEnabled]);
   const [sessionModel, setSessionModel] = useState<ResolvedModelSelection & { thinkingLevel?: string }>(taskChatModel);
   const hasLocalTargetOverrideRef = useRef(false);
   const { models, favoriteProviders, favoriteModels } = useModelsCache();
@@ -515,7 +540,10 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   planner edits could land against a task already being implemented.
   */
   const agentRunning = isWipColumnRole(columnFlags, task.column);
-  const filteredCommands = useMemo(() => filterChatCommands(commandFilter, CHAT_COMMANDS), [commandFilter]);
+  const filteredCommands = useMemo(
+    () => filterChatCommands(commandFilter, selectedChatCommands),
+    [commandFilter, selectedChatCommands],
+  );
 
   useEffect(() => {
     setHighlightedCommandIndex(0);
@@ -747,6 +775,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
         setSessionId(null);
         setSessionModel(taskChatModelRef.current);
         replacePendingMessages([], null);
+        setSessionMemoryFocus(null);
         setMessages([]);
         setHistoryLoaded(true);
         return;
@@ -769,6 +798,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
             }
           : taskChatModelRef.current,
       );
+      setSessionMemoryFocus(resolvedSession.memoryFocus ?? null);
       setMessages(sortMessages(loadedMessages));
       setHistoryLoaded(true);
       if (resolvedSession.isGenerating || resolvedSession.inFlightGeneration) {
@@ -807,6 +837,8 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     pendingMessagesRef.current = [];
     setPendingMessages([]);
     setQueueActionPending(false);
+    setSessionMemoryFocus(null);
+    setMessages([]);
     setDraft("");
     composerStateRef.current = "idle";
     setStreamingThinking("");
@@ -962,6 +994,9 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
       // Planner queue entries are browser-local and keyed by the resolved session. Persist any
       // follow-up typed before session creation completes only after that session becomes known.
       replacePendingMessages(pendingMessagesRef.current, resolvedSessionId);
+      // A brand-new planner session has no focus yet (whole-project scope); seed the
+      // mirror from whatever the created session carries (always null today).
+      setSessionMemoryFocus((session as { memoryFocus?: string | null }).memoryFocus ?? null);
       setMessages((current) => [...current, makeOptimisticUserMessage(resolvedSessionId, content)]);
       if (!isCurrentStreamRequest()) return;
       startPlannerStream({
@@ -1054,7 +1089,7 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
   }, [messages, refreshMessagesForSession, refreshTaskAfterEdit, sessionId, startPlannerStream, t]);
 
   const dispatchSlashCommand = useCallback(async (command: ChatCommand, remainder: string) => {
-    if (!agentRunning) {
+    if (command.requiresAgent && !agentRunning) {
       // Do not silently fall back to a normal chat message: /steer with no
       // running agent is a no-op with feedback, not a plain send.
       addToastRef.current(t("taskDetail.plannerChat.commandNoRunningAgent", "No running agent to steer"), "warning");
@@ -1067,19 +1102,34 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
     */
     setDraft("");
     try {
-      await command.run({ taskId: task.id, projectId, remainder });
-      // Reuse the existing steering-refresh path (same toast + task refresh already
-      // used by the tool-call-driven steering flow above) instead of a second,
-      // divergent success toast for the same underlying action.
-      await refreshTaskAfterSteering();
+      await command.run({ taskId: task.id, sessionId: sessionId ?? "", projectId, remainder });
+      if (command.name === "focus") {
+        /*
+        FNXC:ChatMemoryFocus 2026-08-13:
+        The /focus command persists the topic directly; reflect it locally so the chip
+        matches. "all"/"*"/empty collapse to whole-project scope on display by the selector.
+        */
+        setSessionMemoryFocus(remainder);
+        addToastRef.current(t("taskDetail.plannerChat.focusSetToast", "Memory focus updated"), "success");
+      } else {
+        // Reuse the existing steering-refresh path (same toast + task refresh already
+        // used by the tool-call-driven steering flow above) instead of a second,
+        // divergent success toast for the same underlying action.
+        await refreshTaskAfterSteering();
+      }
     } catch (err) {
       const message = getErrorMessage(err) || t("taskDetail.plannerChat.commandSteerFailed", "Failed to send to the running agent");
       addToastRef.current(message, "error");
     }
-  }, [agentRunning, projectId, refreshTaskAfterSteering, t, task.id]);
+  }, [agentRunning, projectId, refreshTaskAfterSteering, sessionId, t, task.id]);
 
   const handleCommandMenuSelect = useCallback((command: ChatCommand) => {
-    if (!agentRunning) {
+    /*
+    FNXC:ChatMemoryFocus 2026-08-13:
+    The /focus command is not agent-gated, so it remains selectable and dispatchable
+    when no agent is running (it is a local session-setting command).
+    */
+    if (command.requiresAgent && !agentRunning) {
       addToastRef.current(t("taskDetail.plannerChat.commandNoRunningAgent", "No running agent to steer"), "warning");
       return;
     }
@@ -1098,13 +1148,13 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
 
   const sendMessage = useCallback(() => {
     const trimmed = draft.trim();
-    const commandMatch = matchChatCommand(trimmed, CHAT_COMMANDS);
+    const commandMatch = matchChatCommand(trimmed, selectedChatCommands);
     if (commandMatch) {
       setShowCommandMenu(false);
       return dispatchSlashCommand(commandMatch.command, commandMatch.remainder);
     }
     return sendMessageContent(draft);
-  }, [draft, dispatchSlashCommand, sendMessageContent]);
+  }, [draft, dispatchSlashCommand, selectedChatCommands, sendMessageContent]);
 
   const handleDraftChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
     const nextValue = event.target.value;
@@ -1559,56 +1609,76 @@ export function TaskPlannerChatTab({ task, columnFlags, projectId, active, expan
           {filteredCommands.length === 0 ? (
             <div className="chat-skill-menu-empty">{t("chat.noCommandsFound", "No commands found")}</div>
           ) : (
-            filteredCommands.map((command, index) => (
+            filteredCommands.map((command, index) => {
+              /*
+              FNXC:ChatMemoryFocus 2026-08-13:
+              RUFU-068: disable only agent-gated commands (steer) when no agent is
+              running. The /focus command is a local session-setting command and never
+              appears disabled. Only the disabled item shows the no-running-agent hint so
+              the focus menu entry keeps its real description.
+              */
+              const commandDisabled = command.requiresAgent && !agentRunning;
+              return (
               <button
                 key={command.trigger}
                 type="button"
                 role="option"
                 aria-selected={index === highlightedCommandIndex}
-                aria-disabled={!agentRunning}
-                className={`chat-skill-menu-item chat-command-menu-item${index === highlightedCommandIndex ? " chat-skill-menu-item--highlighted" : ""}${!agentRunning ? " chat-command-menu-item--disabled" : ""}`}
+                aria-disabled={commandDisabled}
+                className={`chat-skill-menu-item chat-command-menu-item${index === highlightedCommandIndex ? " chat-skill-menu-item--highlighted" : ""}${commandDisabled ? " chat-command-menu-item--disabled" : ""}`}
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setHighlightedCommandIndex(index)}
                 onClick={() => handleCommandMenuSelect(command)}
               >
                 <span className="chat-skill-menu-item-name">{command.trigger}</span>
                 <span className="chat-skill-menu-item-description">
-                  {agentRunning
-                    ? command.description
-                    : t("chat.commandNoRunningAgentHint", "No running agent to steer")}
+                  {commandDisabled
+                    ? t("chat.commandNoRunningAgentHint", "No running agent to steer")
+                    : command.description}
                 </span>
               </button>
-            ))
+              );
+            })
           )}
         </div>
       )}
-      <div className="task-planner-chat-composer">
-        <div className="task-planner-chat-target-controls" data-testid="task-planner-chat-target-controls">
-          <CustomModelDropdown
-            id="task-planner-chat-model-selector"
-            label={t("taskDetail.plannerChat.modelLabel", "Chat model")}
-            models={models}
-            value={displayedModelProvider && displayedModelId ? `${displayedModelProvider}/${displayedModelId}` : ""}
-            onChange={(value) => void handleTaskChatModelChange(value)}
-            placeholder={t("model.selectPlaceholder", "Select a model…")}
-            defaultOptionLabel={t("models.useDefault", "Use project default")}
-            /*
-            FNXC:TaskChatModelMenu 2026-08-21-01:12:
-            Task Chat keeps its compact composer trigger, but long provider/model names need Direct Chat's readable, viewport-clamped portaled menu on desktop and mobile.
-            */
-            menuWidth="readable"
-            favoriteProviders={favoriteProviders}
-            favoriteModels={favoriteModels}
-            disabled={queueActionPending || composerState === "sending"}
-          />
-          <ChatThinkingLevelControl
-            level={displayedModel.thinkingLevel}
-            defaultThinkingLevel={taskChatModel.thinkingLevel ?? "off"}
-            showTargetSection={false}
-            onChange={(level) => void handleTaskChatThinkingChange(level)}
-            disabled={queueActionPending || composerState === "sending"}
+      {/*
+      FNXC:ChatMemoryFocus 2026-08-24-04:21:
+      Suppress the focus chip and its padded wrapper together until experimentalFeatures.chatFocus
+      is enabled, so default-off planner chat leaves no empty composer shell.
+      */}
+      {chatFocusEnabled && (
+        <div className="task-planner-chat-focus-row">
+          <ChatFocusSelector
+            sessionId={sessionId}
+            projectId={projectId}
+            memoryFocus={sessionMemoryFocus}
+            onPersist={(focus) => setSessionMemoryFocus(focus)}
+            addToast={(message, type) => addToastRef.current(message, type)}
           />
         </div>
+      )}
+      <div className="task-planner-chat-composer">
+        <ChatThinkingLevelControl
+          level={displayedModel.thinkingLevel}
+          defaultThinkingLevel={taskChatModel.thinkingLevel ?? "off"}
+          showTargetSection
+          showAgentTarget={false}
+          targetKey={plannerChatScopeKey}
+          models={models}
+          favoriteProviders={favoriteProviders}
+          favoriteModels={favoriteModels}
+          modelProvider={displayedModelProvider ?? null}
+          modelId={displayedModelId ?? null}
+          modelPickerLabel={t("taskDetail.plannerChat.modelLabel", "Chat model")}
+          modelDefaultOptionLabel={t("models.useDefault", "Use project default")}
+          defaultModelValue={taskChatModel.provider && taskChatModel.modelId ? `${taskChatModel.provider}/${taskChatModel.modelId}` : ""}
+          onChange={(level) => void handleTaskChatThinkingChange(level)}
+          onChangeModel={(selection) => void handleTaskChatModelChange(
+            selection.modelProvider && selection.modelId ? `${selection.modelProvider}/${selection.modelId}` : "",
+          )}
+          disabled={queueActionPending || composerState === "sending"}
+        />
         <textarea
           ref={handleComposerRef}
           className="input task-planner-chat-input"

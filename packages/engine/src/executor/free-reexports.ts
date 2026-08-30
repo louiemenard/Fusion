@@ -107,6 +107,20 @@ export {
   signalTaskComplete as signalTaskCompleteFree,
   triggerPostTaskReflectionCapture as triggerPostTaskReflectionCaptureFree,
 } from "./signal-task-complete.js";
+export {
+  triggerTaskMemoryCapture as triggerTaskMemoryCaptureFree,
+  resolveStashMemorySettings as resolveStashMemorySettingsFree,
+  chatMessageToMemoryCaptureEvent as chatMessageToMemoryCaptureEventFree,
+  ChatSessionMemoryCapture as ChatSessionMemoryCaptureFree,
+  createStashChatMemoryCaptureSink as createStashChatMemoryCaptureSinkFree,
+  STASH_SECRET_KEY as STASH_SECRET_KEY_FREE,
+  STASH_SECRET_SCOPE as STASH_SECRET_SCOPE_FREE,
+  CHAT_MESSAGE_ADDED as CHAT_MESSAGE_ADDED_FREE,
+  CHAT_SESSION_UPDATED as CHAT_SESSION_UPDATED_FREE,
+  FINAL_CHAT_SESSION_STATUSES as FINAL_CHAT_SESSION_STATUSES_FREE,
+  type ChatMemoryCaptureSink as ChatMemoryCaptureSinkFree,
+  type ChatEventEmitter as ChatEventEmitterFree,
+} from "./memory-capture.js";
 export { listWipLaneTasks as listWipLaneTasksFree } from "./list-wip-lane-tasks.js";
 export { resolveSeamColumnAgent as resolveSeamColumnAgentFree } from "./resolve-seam-column-agent.js";
 export { resumeOrphaned as resumeOrphanedFree } from "./resume-orphaned.js";
@@ -139,6 +153,7 @@ export { resetStepsIfWorkLost as resetStepsIfWorkLostFree } from "./reset-steps-
 export { routeRetryableRemediationGraphFailureToPreMergeFix as routeRetryableRemediationGraphFailureToPreMergeFixFree } from "./route-retryable-remediation.js";
 export { buildForeachWorktreeDeps as buildForeachWorktreeDepsFree } from "./build-foreach-worktree-deps.js";
 export { requestPreMergeOptionalStepFix as requestPreMergeOptionalStepFixFree } from "./request-pre-merge-optional-step-fix.js";
+export { appendReviewRemediationSteps as appendReviewRemediationStepsFree } from "./append-review-remediation-steps.js";
 export { createSpawnAgentTool as createSpawnAgentToolFree, spawnAgentParams as spawnAgentParamsFree } from "./create-spawn-agent-tool.js";
 export { createTaskUpdateTool as createTaskUpdateToolFree } from "./create-task-update-tool.js";
 export { attemptExecutorVerificationFix as attemptExecutorVerificationFixFree } from "./attempt-executor-verification-fix.js";

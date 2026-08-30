@@ -27,7 +27,7 @@ import { useRightDockController } from "./components/useRightDockController";
 import { QuickChatFAB } from "./components/QuickChatFAB";
 import { ToastContainer } from "./components/ToastContainer";
 import { useBackgroundSessions } from "./hooks/useBackgroundSessions";
-import { useGitHubStarPromptShown, markGitHubStarPromptShown } from "./hooks/useGitHubStarPrompt";
+import { useGitHubStarPromptState, markGitHubStarPromptShown, refreshGitHubStarPromptDismissal } from "./hooks/useGitHubStarPrompt";
 import { useSessionBannersHidden } from "./hooks/useSessionBannerPref";
 import { mergeTaskSnapshot, useTasks } from "./hooks/useTasks";
 import { useBoardWorkflows } from "./hooks/useBoardWorkflows";
@@ -729,8 +729,14 @@ function AppInner() {
   }, [initialLoadComplete]);
 
   const [quickChatOpen, setQuickChatOpen] = useState(false);
+  /*
+  FNXC:ChatWindows 2026-08-27-09:23:
+  FN-193 requires a newly created conversation to open beside its origin only inside a resolved project. Chat hosts are unreachable before project resolution, but this callback still refuses a missing id so it cannot create an unowned pop-out entry after the server session already exists.
+  */
   const openSessionInNewWindow = useCallback((session: import("./hooks/useChat").ChatSessionInfo) => {
-    if (currentProject?.id) popOutChat(currentProject.id, session);
+    const projectId = currentProject?.id;
+    if (!projectId) return;
+    popOutChat(projectId, session);
   }, [currentProject?.id, popOutChat]);
   const [chatComposerPrefill, setChatComposerPrefill] = useState<{ text: string; nonce: number } | null>(null);
   const [quickChatEverOpenedProjectId, setQuickChatEverOpenedProjectId] = useState<string | null>(null);
@@ -822,12 +828,32 @@ function AppInner() {
   const { chatHasUnreadResponse } = useChatUnreadBadge(currentProject?.id, { taskView, quickChatOpen });
   const { stashOrphanCount } = useStashOrphanCount(currentProject?.id);
   const [showGitHubStarPrompt, setShowGitHubStarPrompt] = useState(false);
-  const gitHubStarPromptShown = useGitHubStarPromptShown();
-  const handleStarPrompt = useCallback(() => setShowGitHubStarPrompt(true), []);
+  /*
+  FNXC:GithubStarAsk 2026-08-23-23:35:
+  The banner gate hides the ask while the durable answer is unknown, but the done-transition TRIGGER
+  below reads the durable answer alone. That transition is one-shot: gating it on the unknown state
+  would drop it for good, so a fresh browser profile would never show the ask even when nobody had
+  dismissed it.
+  */
+  const { dismissed: gitHubStarPromptDismissed, resolved: gitHubStarPromptResolved } = useGitHubStarPromptState();
+  const gitHubStarPromptShown = gitHubStarPromptDismissed || !gitHubStarPromptResolved;
+  /*
+  FNXC:GithubStarAsk 2026-08-23-23:43:
+  Every trigger that would SHOW the ask re-reads the durable answer first — both of them route through
+  here: a task first reaching done, and onboarding completing. The mount-time lookup can be stale by
+  then (first-run setup routinely has this tab open while the operator answers `fn onboard` in a
+  terminal), and showing an ask the operator already dismissed elsewhere is the exact duplicate the
+  shared record exists to prevent.
+  */
+  const handleStarPrompt = useCallback(() => {
+    void refreshGitHubStarPromptDismissal().then((alreadyAnswered) => {
+      if (!alreadyAnswered) setShowGitHubStarPrompt(true);
+    });
+  }, []);
   const { candidate: approvalBannerCandidate, dismissApproval } = useApprovalBanner({
     tasks,
     currentProjectId: currentProject?.id,
-    gitHubStarPromptShown,
+    gitHubStarPromptShown: gitHubStarPromptDismissed,
     onStarPrompt: handleStarPrompt,
   });
 
@@ -1113,6 +1139,8 @@ function AppInner() {
     closeSetupWizard: modalManager.closeSetupWizard,
     closeModelOnboarding: modalManager.closeModelOnboarding,
     closeProjectScopedModals: closeProjectScopedUi,
+    // FNXC:GithubStarAsk 2026-08-19-03:59: finishing onboarding is the first moment we ask for a GitHub star.
+    onOnboardingCompleted: handleStarPrompt,
   });
 
   const { handleDetailClose } = useDeepLink({
@@ -1619,7 +1647,7 @@ function AppInner() {
 
   // Props for the extracted <MainContent> switch (see components/dashboard/MainContent.tsx).
   // Every value is passed by its App name; the switch renders the same subtrees as before.
-  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetailForCurrentView, onOpenSessionInNewWindow: openSessionInNewWindow, openMobileTasksInPopup, openFileInBrowser, onMoveTask: moveTask, onDeleteTask: deleteTask, onArchiveTask: archiveTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
+  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, columnFlagsByTaskId: footerColumnFlagsByTaskId, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetailForCurrentView, onOpenSessionInNewWindow: openSessionInNewWindow, openMobileTasksInPopup, openFileInBrowser, onUpdateTask: updateTask, onDeleteTask: deleteTask, onArchiveTask: archiveTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onPauseTask: pauseTask, onUnpauseTask: unpauseTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -2281,7 +2309,6 @@ function AppInner() {
               active={popupVisible}
               embedded
               onOpenDetail={popOutTaskDetailForCurrentView}
-              onMoveTask={moveTask}
               /* FNXC:TaskRevert 2026-08-01-20:27: Popped-out detail preserves Delete-or-Revise recovery for reverted tasks. */
               onReviseTask={(task) => modalManager.openNewTaskWithDescription(task.description)}
               onDeleteTask={deleteTask}

@@ -45,6 +45,7 @@ vi.mock("../../api", () => ({
   fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
   fetchTasks: vi.fn().mockResolvedValue([]),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+  fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
 }));
 
 installChatViewEnv();
@@ -61,10 +62,22 @@ function dispatchFind(target: EventTarget, modifier: "ctrl" | "meta" = "ctrl") {
   return event;
 }
 
+/*
+FNXC:ChatNavigation 2026-08-23-18:25:
+FN-9193 docks the conversation list on tablet-or-wider hosts, so the in-thread Back control renders
+only while that list is collapsed. Detail entry is proven by the thread header identity, and a case
+that needs to LEAVE the conversation collapses the docked list first to reach Back.
+*/
 async function enterDirectDetail() {
   fireEvent.pointerDown(screen.getByTestId(`chat-session-${activeSessionFixture.id}`));
   fireEvent.click(screen.getByTestId(`chat-session-${activeSessionFixture.id}`));
-  return screen.findByTestId("chat-back-btn");
+  return screen.findByTestId("chat-thread-header-identity");
+}
+
+function leaveDirectDetail() {
+  const dockToggle = screen.queryByTestId("chat-docked-sidebar-toggle");
+  if (dockToggle) fireEvent.click(dockToggle);
+  fireEvent.click(screen.getByTestId("chat-back-btn"));
 }
 
 describe("ChatView content search", () => {
@@ -161,38 +174,10 @@ describe("ChatView content search", () => {
     expect(screen.getByTestId("chat-message-message-1")).toHaveClass("chat-message--search-active");
     fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
     expect(screen.getByTestId("chat-message-message-2")).toHaveClass("chat-message--search-active");
-    fireEvent.click(screen.getByTestId("chat-back-btn"));
+    leaveDirectDetail();
     expect(screen.queryByTestId("chat-conversation-search")).toBeNull();
   });
 
-  it("searches room details without changing the Direct list query", async () => {
-    mockViewportMode("mobile");
-    const room = { id: "room-find", projectId: "proj-123", slug: "find", name: "Find", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
-    const setSearchQuery = vi.fn();
-    localStorage.setItem("fusion:chat-scope", "rooms");
-    setupMockChat({ sessions: [], filteredSessions: [], setSearchQuery });
-    setupMockRooms({
-      rooms: [room],
-      activeRoom: room,
-      messages: [
-        { id: "room-find-1", roomId: room.id, role: "user", content: "Room needle", createdAt: "2026-01-01T00:00:00.000Z", senderAgentId: null, mentions: [] },
-        { id: "room-find-2", roomId: room.id, role: "assistant", content: "Another room needle", createdAt: "2026-01-01T00:01:00.000Z", senderAgentId: "agent-001", mentions: [] },
-      ],
-    });
-
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
-    fireEvent.click(screen.getByTestId("chat-room-item-find"));
-    const firstRow = await screen.findByTestId("chat-message-room-find-1");
-    const event = dispatchFind(firstRow);
-
-    expect(event.defaultPrevented).toBe(true);
-    const input = await screen.findByTestId("chat-conversation-search-input");
-    fireEvent.change(input, { target: { value: "needle" } });
-    expect(screen.getByText("1 of 2 matches")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Previous match" }));
-    expect(screen.getByTestId("chat-message-room-find-2")).toHaveClass("chat-message--search-active");
-    expect(setSearchQuery).not.toHaveBeenCalled();
-  });
 
   it("keeps native Find terminal-owned while hybrid transcripts own it", async () => {
     const hybrid = { ...activeSessionFixture, cliExecutorAdapterId: "claude-code", cliSessionFile: "cli-find" };

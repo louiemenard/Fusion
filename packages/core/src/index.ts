@@ -340,6 +340,7 @@ export type {
 } from "./agents/column-agent-resolver.js";
 export { BUILTIN_CODING_WORKFLOW_IR } from "./workflows/builtin-coding-workflow-ir.js";
 export { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "./workflows/builtin-coding-ideas-workflow-ir.js";
+export { BUILTIN_CODING_IDEAS_V2_WORKFLOW_IR } from "./workflows/builtin-coding-ideas-v2-workflow-ir.js";
 export { PLAN_REVIEW_GROUP_ID } from "./workflows/builtin-plan-review-group.js";
 export { BUILTIN_MARKETING_WORKFLOW_IR } from "./workflows/builtin-marketing-workflow-ir.js";
 export { evaluateForeachMergeProof } from "./workflow-merge-proof.js";
@@ -348,9 +349,15 @@ export {
   resolveWorkflowOptionalSteps,
   resolveDefaultOnOptionalGroupIds,
   isWorkflowOptionalGroupEnabled,
+  isReportingOnlyOptionalGroup,
 } from "./workflows/workflow-optional-steps.js";
 export type { ResolvedWorkflowOptionalStep } from "./workflows/workflow-optional-steps.js";
-export { resolveRequiredPreMergeStepIds } from "./merge/required-pre-merge-steps.js";
+export { resolveRequiredPreMergeStepIds, resolvePreMergeGateForTask } from "./merge/required-pre-merge-steps.js";
+export type { ResolvedPreMergeGate } from "./merge/required-pre-merge-steps.js";
+export { resolveStepReopenPolicy } from "./workflows/workflow-step-reopen-policy.js";
+/* FNXC:ReviewLaneRecommendations 2026-08-26-07:34: shared with the engine so a review-lane projection is screened by the same rule as the store boundary. */
+export { normalizeTaskRecommendations } from "./tasks/recommendation-validation.js";
+export type { StepReopenPolicy } from "./workflows/workflow-step-reopen-policy.js";
 export {
   classifyMergeSweepAdmission,
   DEFAULT_MERGE_SWEEP_QUIESCENCE_MS,
@@ -405,6 +412,7 @@ export {
 } from "./config/moved-settings.js";
 export {
   ensureGitRepositoryForProjectPath,
+  ensureProjectGitReadiness,
   GitRepositoryInitializationError,
   WorkspaceRepoValidationError,
   detectWorkspaceRepos,
@@ -421,11 +429,24 @@ export type {
   GitRepositoryCommandRunner,
   GitRepositoryEnsureOutcome,
   EnsureGitRepositoryOptions,
+  ProjectGitReadiness,
   WorkspaceConfig,
   WorkspaceRepoValidationReason,
   WorkspaceModeToggleOps,
   WorkspaceModeToggleResult,
 } from "./git/git-repository.js";
+export {
+  WELL_KNOWN_INTEGRATION_BRANCHES,
+  selectIntegrationBranch,
+  ensureIntegrationBranchLocalRef,
+} from "./git/integration-branch-readiness.js";
+export type {
+  IntegrationBranchSource,
+  IntegrationBranchSelectionInput,
+  IntegrationBranchSelection,
+  IntegrationBranchReconciliation,
+  EnsureIntegrationBranchLocalRefOptions,
+} from "./git/integration-branch-readiness.js";
 
 // ── Trait model (U2) ─────────────────────────────────────────────────
 export type {
@@ -997,6 +1018,15 @@ export {
   type NoOpCompletionMarker,
   type NoOpCompletionMarkerKind,
 } from "./merge/no-op-completion-marker.js";
+export {
+  formatRemediationStepName,
+  isRemediationStep,
+  remediationWaveCount,
+  hasOpenEquivalentRemediationStep,
+  remediationDeclaredFiles,
+} from "./tasks/remediation-steps.js";
+export type { RemediationStepInput } from "./tasks/remediation-steps.js";
+export type { AppendRemediationStepsOptions, AppendRemediationStepsResult } from "./task-store/remediation-step-ops.js";
 export { evaluateNoCommitsNoOpFinalize } from "./merge/no-commits-finalize-guard.js";
 export type { NoCommitsNoOpFinalizeEvaluation } from "./merge/no-commits-finalize-guard.js";
 export { evaluateCompletedPromotionFailureProvenance, CLEAN_COMPLETION_MARKERS } from "./merge/completed-promotion-failure-provenance.js";
@@ -1273,6 +1303,7 @@ export {
   getTaskHardMergeBlocker,
   getMergeConfirmedFinalizationBlocker,
   getUnfinishedStepTitles,
+  hasNonTerminalSteps,
   REVIEW_ELIGIBLE_SENTINEL_COLUMN,
   MERGE_CONFIRMED_TRANSIENT_STATUSES,
   clearMergeConfirmedTransientStatus,
@@ -1295,6 +1326,12 @@ export {
   type MergeTargetResolution,
   type MergeTargetResolverOptions,
 } from "./merge/task-merge.js";
+export { describeMergeContentShape } from "./merge/merge-content-descriptor.js";
+export type { MergeContentDescriptor } from "./merge/merge-content-descriptor.js";
+export { evaluatePreMergeApprovals } from "./merge/pre-merge-approval.js";
+export { getPostMergeFinalizeBlocker, planConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
+export type { ConfirmedMergeChecklistReconciliation } from "./merge/confirmed-merge-reconciliation.js";
+export type { PreMergeApproval, PreMergeApprovalState } from "./merge/pre-merge-approval.js";
 export {
   isBranchGroupMemberLanded,
   isBranchGroupComplete,
@@ -2158,6 +2195,7 @@ export {
   readProjectMemoryWithBackend,
   searchProjectMemory,
   getProjectMemory,
+  buildProactiveMemoryCueBlock,
   resolveMemoryInstructionContext,
   type MemoryInstructionContext,
 } from "./memory/project-memory.js";
@@ -2210,14 +2248,70 @@ export {
   readMemory,
   writeMemory,
   memoryExists,
+  captureMemory,
   MEMORY_BACKEND_SETTINGS_KEYS,
   DEFAULT_MEMORY_BACKEND,
   isQmdAvailable,
 } from "./memory/memory-backend.js";
 
-export { MemoryBackendError } from "./memory/memory-backend.js";
+export {
+  MemoryBackendError,
+  type MemoryBackendErrorCode,
+} from "./memory/memory-backend-error.js";
 
-export type { MemoryBackendCapabilities, MemoryFileInfo, MemoryGetOptions, MemoryGetResult, MemorySearchOptions, MemorySearchResult } from "./memory/memory-backend.js";
+// FNXC:StashBackend 2026-08-13-16:35: (RUFU-068) expose the Stash backend.
+export {
+  StashMemoryBackend,
+  DEFAULT_STASH_URL,
+  // FNXC:RUFU122ChunkedUpload 2026-08-19-04:30: verified per-POST event cap; the engine
+  // transcript builder and the sink share this bound.
+  STASH_EVENT_BATCH_CHUNK_SIZE,
+  // FNXC:RUFU121CoreExports 2026-08-18-19:53: RUFU-121 recall + delete-sync helpers.
+  normalizeStashSearchQuery,
+  queryStashEvents,
+  deleteStashChatSession,
+  // FNXC:RUFU125CoreExports 2026-08-19-06:07: RUFU-125 bulk archival delete-sync helpers.
+  DEFAULT_STASH_BULK_MAX_PAGES,
+  deleteStashChatSessions,
+  bulkDeleteStashChatSessions,
+} from "./memory/memory-backend-stash.js";
+export type {
+  StashEvent,
+  StashHttpMethod,
+  StashHttpClient,
+  StashEventQueryFilters,
+  StashChatSessionDeleteResult,
+  // FNXC:RUFU125CoreExports 2026-08-19-06:07: RUFU-125 bulk delete-sync types.
+  StashBulkChatSessionDeleteResult,
+  StashBulkChatSessionSyncSummary,
+  StashBulkDeleteStore,
+} from "./memory/memory-backend-stash.js";
+
+// FNXC:RUFU121StashSettingsInCore 2026-08-18-19:53: (RUFU-121) Stash settings/secret
+// resolution moved from @fusion/engine into core (dashboard delete-sync consumer).
+export {
+  STASH_SECRET_KEY,
+  STASH_SECRET_SCOPE,
+  resolveStashMemorySettings,
+} from "./memory/stash-settings.js";
+export type {
+  MemoryBackendSettings,
+  StashSecretsReader,
+} from "./memory/stash-settings.js";
+
+export type {
+  MemoryBackendCapabilities,
+  MemoryFileInfo,
+  MemoryGetOptions,
+  MemoryGetResult,
+  MemorySearchOptions,
+  MemorySearchResult,
+  MemoryCaptureEvent,
+  MemoryCaptureResult,
+  MemoryCaptureEventType,
+  // FNXC:RUFU121CoreExports 2026-08-18-19:53: RUFU-121 write() identity meta.
+  MemoryWriteIdentity,
+} from "./memory/memory-backend.js";
 
 export {
   agentDailyMemoryPath,
@@ -2332,7 +2426,7 @@ export type {
   ResearchCancellationState,
 } from "./research/research-types.js";
 
-export { isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG } from "./config/experimental-features.js";
+export { isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG, CHAT_FOCUS_FLAG } from "./config/experimental-features.js";
 export {
   DEFAULT_MOBILE_NAV_PRIMARY_ITEMS,
   MAX_MOBILE_NAV_PRIMARY_ITEMS,
@@ -2603,7 +2697,7 @@ export {
 export type { ProviderInstanceRef } from "./provider-instance.js";
 
 // ── Error helpers ─────────────────────────────────────────
-export { getErrorMessage } from "./process/error-message.js";
+export { getErrorMessage, describeErrorChain, summarizeErrorForOperator } from "./process/error-message.js";
 
 // ── Secrets crypto ───────────────────────────────────────
 export {

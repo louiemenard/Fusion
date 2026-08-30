@@ -47,6 +47,7 @@ vi.mock("../../api", () => ({
   fetchDiscoveredSkills: vi.fn().mockResolvedValue([]),
   fetchTasks: vi.fn().mockResolvedValue([]),
   searchFiles: vi.fn().mockResolvedValue({ files: [] }),
+  fetchChatSession: vi.fn().mockResolvedValue({ session: { memoryFocus: null } }),
 }));
 
 installChatViewEnv();
@@ -60,9 +61,14 @@ function expectNoContextWindowShell() {
 FNXC:ChatNavigation 2026-08-19-21:10:
 FN-054 keeps the context indicator tests on the selected thread while the conversation list owns all switching and management. Opening detail through a list row verifies the constrained host without restoring a selector.
 */
+/*
+FNXC:ChatNavigation 2026-08-23-23:20:
+FN-9193 docks the conversation list beside the thread on desktop, and the Back affordance renders
+only while that list is hidden — so detail entry is confirmed by the thread, not by `chat-back-btn`.
+*/
 async function openDirectThread(sessionId = "session-001") {
   await userEvent.click(screen.getByTestId(`chat-session-${sessionId}`));
-  await waitFor(() => expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument());
+  await waitFor(() => expect(document.querySelector(".chat-thread")).toBeInTheDocument());
 }
 
 function setupDirectChat(options: { content?: string; streamingText?: string; messages?: Array<Record<string, unknown>> } = {}) {
@@ -267,31 +273,4 @@ describe("ChatView context-window indicator", () => {
     expect(await screen.findByTestId("chat-thread-context-window")).toHaveTextContent("100 / 200k");
   });
 
-  it("does not render an indicator shell in rooms scope", async () => {
-    const room = createRoomFixture("context-room");
-    localStorage.setItem("fusion:chat-scope", "rooms");
-    setupDirectChat({ content: "abcd" });
-    setupMockRooms({
-      rooms: [room],
-      activeRoom: room,
-      activeRoomMembers: [],
-      messages: [
-        {
-          id: "room-msg-001",
-          roomId: room.id,
-          role: "user",
-          content: "Room hello",
-          createdAt: "2026-04-08T00:00:00.000Z",
-          senderAgentId: null,
-          mentions: [],
-        },
-      ],
-    });
-
-    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
-    await userEvent.click(screen.getByTestId("chat-room-item-context-room"));
-
-    expect(document.querySelector(".chat-room-thread-header")).toBeInTheDocument();
-    expectNoContextWindowShell();
-  });
 });

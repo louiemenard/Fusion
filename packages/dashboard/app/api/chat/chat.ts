@@ -216,7 +216,12 @@ export function ensureTaskPlannerChatSession(
   );
 }
 
-/** Update a chat session (title, status, thinkingLevel, model, or agent target) */
+/**
+ * Update a chat session (title, status, thinkingLevel, model, agent target, or
+ * memory focus). `memoryFocus` is forwarded verbatim to PATCH
+ * /api/chat/sessions/:id, whose route normalizes empty -> null (whole-project
+ * scope) via ChatStore.setSessionMemoryFocus.
+ */
 export function updateChatSession(
   id: string,
   updates: {
@@ -228,6 +233,7 @@ export function updateChatSession(
     thinkingLevel?: string | null;
     pinned?: boolean;
     tagIds?: string[];
+    memoryFocus?: string | null;
   },
   projectId?: string,
 ): Promise<ChatSessionResponse> {
@@ -242,6 +248,29 @@ export function deleteChatSession(id: string, projectId?: string): Promise<{ suc
   return api<{ success: boolean }>(withProjectId(`/chat/sessions/${encodeURIComponent(id)}`, projectId), {
     method: "DELETE",
   });
+}
+
+export interface ChatStashBackfillResponse {
+  ok: boolean;
+  inserted: number;
+  skipped: number;
+  uploaded: number;
+  error?: string;
+}
+
+/**
+ * FNXC:ChatStashBackfill 2026-08-19-16:28:
+ * Backfill a chat's full message history into Stash (operator action, only meaningful
+ * when the project memory backend is Stash). Idempotent: the route pre-checks the
+ * session's existing Stash events and skips already-stored content, so re-runs and
+ * backfill-after-live-capture insert nothing new (Stash's batch endpoint itself has
+ * no server-side dedupe).
+ */
+export function backfillChatSessionToStash(id: string, projectId?: string): Promise<ChatStashBackfillResponse> {
+  return api<ChatStashBackfillResponse>(
+    withProjectId(`/chat/sessions/${encodeURIComponent(id)}/backfill-stash`, projectId),
+    { method: "POST" },
+  );
 }
 
 /** Fetch messages for a chat session */
@@ -539,7 +568,8 @@ export interface ChatStreamHandlers {
   onToolStart?: (data: { toolName: string; args?: Record<string, unknown> }) => void;
   onToolEnd?: (data: { toolName: string; isError: boolean; result?: unknown }) => void;
   onFallback?: (data: { primaryModel: string; fallbackModel: string; triggerPoint: "session-creation" | "prompt-time" }) => void;
-  onDone?: (data: { messageId: string; message?: ChatMessage; interrupted?: boolean }) => void;
+  onAgentMessage?: (data: { message: ChatMessage; senderAgentId: string; senderAgentName: string }) => void;
+  onDone?: (data: { messageId: string; message?: ChatMessage; interrupted?: boolean; dispatch?: "agents"; failedAgentNames?: string[] }) => void;
   onError?: (data: string | ChatFailureInfo, meta?: ChatStreamErrorMeta) => void;
   onConnectionStateChange?: (state: StreamConnectionState) => void;
 }
@@ -627,13 +657,25 @@ export function streamChatResponse(
           // skip malformed event
         }
         break;
+      case "agent_message":
+        try {
+          const parsed = JSON.parse(rawData) as { message?: unknown; senderAgentId?: unknown; senderAgentName?: unknown };
+          if (parsed.message && typeof parsed.message === "object" && typeof parsed.senderAgentId === "string" && typeof parsed.senderAgentName === "string") {
+            handlers.onAgentMessage?.({ message: parsed.message as ChatMessage, senderAgentId: parsed.senderAgentId, senderAgentName: parsed.senderAgentName });
+          }
+        } catch {
+          // skip malformed event
+        }
+        break;
       case "done":
         terminated = true;
         try {
-          const parsed = JSON.parse(rawData) as { messageId?: unknown; message?: unknown };
+          const parsed = JSON.parse(rawData) as { messageId?: unknown; message?: unknown; dispatch?: unknown; failedAgentNames?: unknown };
           handlers.onDone?.({
             messageId: typeof parsed.messageId === "string" ? parsed.messageId : "",
             ...(parsed.message && typeof parsed.message === "object" ? { message: parsed.message as ChatMessage } : {}),
+            ...(parsed.dispatch === "agents" ? { dispatch: "agents" as const } : {}),
+            ...(Array.isArray(parsed.failedAgentNames) ? { failedAgentNames: parsed.failedAgentNames.filter((name): name is string => typeof name === "string") } : {}),
           });
         } catch {
           handlers.onDone?.({ messageId: "" });
@@ -858,13 +900,25 @@ export function attachChatStream(
           // skip malformed event
         }
         break;
+      case "agent_message":
+        try {
+          const parsed = JSON.parse(rawData) as { message?: unknown; senderAgentId?: unknown; senderAgentName?: unknown };
+          if (parsed.message && typeof parsed.message === "object" && typeof parsed.senderAgentId === "string" && typeof parsed.senderAgentName === "string") {
+            handlers.onAgentMessage?.({ message: parsed.message as ChatMessage, senderAgentId: parsed.senderAgentId, senderAgentName: parsed.senderAgentName });
+          }
+        } catch {
+          // skip malformed event
+        }
+        break;
       case "done":
         terminated = true;
         try {
-          const parsed = JSON.parse(rawData) as { messageId?: unknown; message?: unknown };
+          const parsed = JSON.parse(rawData) as { messageId?: unknown; message?: unknown; dispatch?: unknown; failedAgentNames?: unknown };
           handlers.onDone?.({
             messageId: typeof parsed.messageId === "string" ? parsed.messageId : "",
             ...(parsed.message && typeof parsed.message === "object" ? { message: parsed.message as ChatMessage } : {}),
+            ...(parsed.dispatch === "agents" ? { dispatch: "agents" as const } : {}),
+            ...(Array.isArray(parsed.failedAgentNames) ? { failedAgentNames: parsed.failedAgentNames.filter((name): name is string => typeof name === "string") } : {}),
           });
         } catch {
           handlers.onDone?.({ messageId: "" });

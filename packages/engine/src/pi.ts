@@ -11,6 +11,7 @@ import { exec, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import { basename, dirname, join, relative, isAbsolute, resolve } from "node:path";
 
 const execAsync = promisify(exec);
@@ -87,6 +88,11 @@ import { resolvePermanentAgentToolDecision } from "./agents/permanent-agent-gati
 import type { SystemPromptLayers } from "./execution/prompt-layers.js";
 import { READONLY_ALLOWLIST, filterCustomToolsForReadonly, isReadonlyAllowed } from "./workflows/workflow-step-tool-policy.js";
 import { createStreamingDeltaNormalizer } from "./execution/streaming-delta.js";
+import {
+  applyReasoningSummaryToPayload,
+  isReasoningSummaryUnsupportedError,
+  type ReasoningSummaryDetail,
+} from "./execution/reasoning-summary-payload.js";
 import { isModelAuthTierIncompatibilityError, isProviderModelNotFoundError, isUnsupportedMessageRoleError } from "./errors/transient-error-detector.js";
 import { logMcpForwardingSkipped, runtimeSupportsMcp } from "./mcp/mcp-runtime-support.js";
 import { connectMcpSessionTools, type McpClientFactory, type McpSessionToolset } from "./mcp/mcp-session-tools.js";
@@ -230,12 +236,14 @@ interface ToolHookResult {
 type AgentToolHookSession = AgentSession & {
   agent?: {
     afterToolCall?: (payload: ToolHookPayload) => Promise<ToolHookResult | undefined>;
+    onPayload?: (payload: unknown, model: { api?: unknown }) => unknown | undefined | Promise<unknown | undefined>;
     state?: {
       messages?: Array<Record<string, unknown>>;
     };
   };
   __fusionToolResultGuardInstalled?: boolean;
   __fusionMessageContentGuardInstalled?: boolean;
+  __fusionReasoningSummaryPayloadHookInstalled?: boolean;
 };
 const FN_MEMORY_APPEND_TOOL_NAME = "fn_memory_append";
 const FUSION_SHUTDOWN_WRAP_FLAG = "__fusionSessionShutdownDisposeWrapped";
@@ -1098,6 +1106,8 @@ export interface AgentOptions {
   fallbackThinkingLevel?: string;
   /** Default thinking effort level (e.g. "medium", "high"). When provided, sets the session's thinking level after creation. */
   defaultThinkingLevel?: string;
+  /** Detail requested for already-enabled Responses reasoning summaries; defaults to detailed. */
+  reasoningSummaryDetail?: ReasoningSummaryDetail;
   /** Optional pre-configured SessionManager. When provided, the agent session
    *  uses this instead of creating an in-memory session. Pass a file-based
    *  SessionManager to enable session persistence and pause/resume. */
@@ -1660,6 +1670,22 @@ function normalizeExistingPathForGitComparison(path: string): string {
   }
 }
 
+function normalizePathThroughExistingAncestor(path: string): string {
+  const resolvedPath = resolve(path);
+  let existingAncestor = resolvedPath;
+
+  while (true) {
+    try {
+      const canonicalAncestor = realpathSync.native(existingAncestor);
+      return resolve(canonicalAncestor, relative(existingAncestor, resolvedPath));
+    } catch {
+      const parent = dirname(existingAncestor);
+      if (parent === existingAncestor) return resolvedPath;
+      existingAncestor = parent;
+    }
+  }
+}
+
 /**
  * FNXC:SkillReadBoundary 2026-07-21-12:00:
  * GitHub #2384 / FN-8466 requires the exact host-advertised additional skill
@@ -1771,6 +1797,7 @@ export async function resolveSessionBoundaryRoot(
  * - Task attachments under .fusion/tasks/N/attachments/ are allowed (for reading context files)
  * - Sibling task specs (.fusion/tasks/N/PROMPT.md and task.json) are allowed for
  *   read-only tools (read/glob/grep) so agents can consult dependency specs.
+ * - User skills under ~/.agents/skills are allowed for read-only tools only.
  * - Host-advertised additional skill roots are allowed for read-only tools only.
  * - All other paths outside the worktree are rejected
  *
@@ -1794,32 +1821,29 @@ function isWorktreeAllowedPath(
   const requestedResolved = isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(worktreeResolved, requestedPath);
   const worktreeCanonical = normalizeExistingPathForGitComparison(worktreeResolved);
   const projectRootCanonical = normalizeExistingPathForGitComparison(projectRootResolved);
-  const requestedCanonical = normalizeExistingPathForGitComparison(requestedResolved);
+  const requestedCanonical = normalizePathThroughExistingAncestor(requestedResolved);
 
+  /*
+  FNXC:WorktreeBoundary 2026-08-22-02:52:
+  Every worktree and project exception must use canonical containment only. A lexical path beneath an allowed root can cross a symlink to host files, including when the final glob/write target does not exist yet; normalize through the deepest existing ancestor before deciding.
+  */
   // Check if path is inside the worktree
-  if (
-    isSameOrInsidePath(worktreeResolved, requestedResolved) ||
-    isSameOrInsidePath(worktreeCanonical, requestedCanonical)
-  ) {
+  if (isSameOrInsidePath(worktreeCanonical, requestedCanonical)) {
     return true; // Path is inside the worktree
   }
 
   // Exception: project root `.fusion/memory/` files for durable project learnings
-  const relToProjectRoot = relative(projectRootResolved, requestedResolved).replace(/\\/g, "/");
   const relToCanonicalProjectRoot = relative(projectRootCanonical, requestedCanonical).replace(/\\/g, "/");
-  const projectRelativePaths = [relToProjectRoot, relToCanonicalProjectRoot];
   if (
-    projectRelativePaths.some((relPath) =>
-      relPath === ".fusion/memory" ||
-      relPath === ".fusion/memory/" ||
-      relPath.startsWith(".fusion/memory/")
-    )
+    relToCanonicalProjectRoot === ".fusion/memory" ||
+    relToCanonicalProjectRoot === ".fusion/memory/" ||
+    relToCanonicalProjectRoot.startsWith(".fusion/memory/")
   ) {
     return true;
   }
 
   // Exception: task attachments under `.fusion/tasks/*/attachments/*`
-  if (projectRelativePaths.some((relPath) => relPath.match(/^\.fusion\/tasks\/[^/]+\/attachments\//))) {
+  if (relToCanonicalProjectRoot.match(/^\.fusion\/tasks\/[^/]+\/attachments\//)) {
     return true;
   }
 
@@ -1829,7 +1853,7 @@ function isWorktreeAllowedPath(
   // the agent can discover them; writes and bash remain restricted.
   const readOnlyTools = new Set(["read", "glob", "grep", "find", "ls"]);
   if (toolName && readOnlyTools.has(toolName)) {
-    if (projectRelativePaths.some((relPath) => /^\.fusion\/tasks\/[^/]+\/(PROMPT\.md|task\.json)$/.test(relPath))) {
+    if (/^\.fusion\/tasks\/[^/]+\/(PROMPT\.md|task\.json)$/.test(relToCanonicalProjectRoot)) {
       return true;
     }
 
@@ -1838,12 +1862,17 @@ function isWorktreeAllowedPath(
     GitHub #2384 / FN-8466 lets agents Read only the specific additional skill
     roots advertised by this session. Do not extend this exception to write,
     edit, or bash: plugin skill bodies remain host-owned read-only context.
+
+    FNXC:SkillReadBoundary 2026-08-22-09:37:
+    Skill-root containment must compare canonical paths only. A lexical path
+    beneath an allowed root can traverse a symlink whose real target is outside
+    that root; canonicalizing the deepest existing ancestor also closes this
+    escape for glob paths and nonexistent descendants.
     */
     if (readOnlyExtraRoots.some((root) => {
       const rootResolved = resolve(root);
-      const rootCanonical = normalizeExistingPathForGitComparison(rootResolved);
-      return isSameOrInsidePath(rootResolved, requestedResolved)
-        || isSameOrInsidePath(rootCanonical, requestedCanonical);
+      const rootCanonical = normalizePathThroughExistingAncestor(rootResolved);
+      return isSameOrInsidePath(rootCanonical, requestedCanonical);
     })) {
       return true;
     }
@@ -1944,7 +1973,17 @@ export function wrapToolsWithBoundary(
     return tools; // Not a worktree session, no wrapping needed
   }
 
-  const normalizedReadOnlyExtraRoots = normalizeAdditionalSkillPaths(readOnlyExtraRoots);
+  /*
+  FNXC:SkillReadBoundary 2026-08-22-09:20:
+  Agent Skills installs reusable user skills under ~/.agents/skills. Worktree
+  sessions must be able to read those skill bodies and references, but the
+  exception must not expose sibling ~/.agents configuration or permit writes,
+  edits, or Bash outside the worktree.
+  */
+  const normalizedReadOnlyExtraRoots = normalizeAdditionalSkillPaths([
+    join(homedir(), ".agents", "skills"),
+    ...readOnlyExtraRoots,
+  ]);
 
   return tools.map((tool) => {
     // Only wrap tools that access the filesystem
@@ -1975,9 +2014,9 @@ export function wrapToolsWithBoundary(
           const relToProject = relative(projectRoot, pathArg);
           return boundaryRejection(
             `Path "${relToProject}" is outside the worktree boundary. ` +
-              `Coding agents can only modify files inside the current worktree. ` +
+              `Coding agents can only access files inside the current worktree. ` +
               `Existing exceptions include .fusion/memory/ and task attachments; ` +
-              `read-only tools may also access sibling task specs and host-advertised skill roots.`,
+              `read-only tools may also access sibling task specs, ~/.agents/skills, and host-advertised skill roots.`,
           );
         }
 
@@ -3105,10 +3144,37 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
     piLog.debug("Fallback session created successfully");
   }
 
+  const reasoningSummaryDetail = options.reasoningSummaryDetail ?? "detailed";
+  let reasoningSummaryCompatibilityDisabled = reasoningSummaryDetail === "off";
+  /*
+  FNXC:ThinkingTrace 2026-08-27-10:45:
+  Pi may already own an onPayload hook for extension request processing. Chain it so a replacement payload remains authoritative, then upgrade only its existing Responses reasoning; fallback-swapped sessions install the same hook so recovery cannot revert to titles-only summaries.
+  */
+  const installReasoningSummaryPayloadHook = (session: AgentToolHookSession): void => {
+    if (session.__fusionReasoningSummaryPayloadHookInstalled || !session.agent) {
+      return;
+    }
+
+    const agent = session.agent;
+    const previousOnPayload = agent.onPayload;
+    agent.onPayload = async (payload, model) => {
+      const previousResult = previousOnPayload ? await previousOnPayload(payload, model) : undefined;
+      const effectivePayload = previousResult ?? payload;
+      const replacement = applyReasoningSummaryToPayload(
+        effectivePayload,
+        model,
+        reasoningSummaryCompatibilityDisabled ? "off" : reasoningSummaryDetail,
+      );
+      return replacement ?? previousResult;
+    };
+    session.__fusionReasoningSummaryPayloadHookInstalled = true;
+  };
+
   let activeSession = sessionResult.session;
   wrapSessionDisposeWithShutdown(activeSession);
   installToolResultContentGuard(activeSession as AgentToolHookSession);
   installMessageContentGuard(activeSession as AgentToolHookSession, sessionManager as unknown as SessionManagerLike);
+  installReasoningSummaryPayloadHook(activeSession as AgentToolHookSession);
   (activeSession as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === FN_MEMORY_APPEND_TOOL_NAME) === true;
   const promptableSession = activeSession as PromptableSession;
 
@@ -3142,6 +3208,7 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
       targetSession as unknown as AgentToolHookSession,
       sessionManager as unknown as SessionManagerLike,
     );
+    installReasoningSummaryPayloadHook(targetSession as unknown as AgentToolHookSession);
     (targetSession as any).__fusionMemoryAppendAvailable = options.customTools?.some((tool) => tool.name === FN_MEMORY_APPEND_TOOL_NAME) === true;
     const deltaNormalizer = createStreamingDeltaNormalizer();
     targetSession.subscribe((event) => {
@@ -3325,6 +3392,17 @@ export async function createPiAgentSessionRaw(options: AgentOptions): Promise<Ag
         piLog.warn(`Prompt failed with thinking/reasoning conflict; retrying without explicit thinking level: ${errorMessage}`);
         const recoveredSession = await swapPromptSession(selectedModel);
         await promptSessionAndCheck(recoveredSession, prompt, effectivePromptOptions);
+        return;
+      }
+
+      /*
+      FNXC:ThinkingTrace 2026-08-27-10:45:
+      Detailed summaries improve traces but are optional request metadata. A provider that rejects the field retries once on this same session with the hook disabled, so a capability mismatch never fails the run or leaks to another session.
+      */
+      if (!reasoningSummaryCompatibilityDisabled && isReasoningSummaryUnsupportedError(errorMessage)) {
+        reasoningSummaryCompatibilityDisabled = true;
+        piLog.warn(`Provider rejected detailed reasoning summary for ${describeModel(activeSession)}; retrying without the summary upgrade`);
+        await promptSessionAndCheck(activeSession, prompt, effectivePromptOptions);
         return;
       }
 

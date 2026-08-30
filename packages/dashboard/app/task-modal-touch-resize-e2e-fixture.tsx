@@ -77,7 +77,13 @@ window.fetch = async (input) => {
           ? fixtureTask
           : pathname === "/api/tasks"
             ? [fixtureTask]
-          : url.includes("/insights")
+          /*
+    FNXC:WorkspaceRepos 2026-08-23-23:58:
+    New Task fetches the workspace repository set on open; without this entry the stub's `[]` default answered it and the modal stored a non-array, so every surface here rendered an empty page.
+    */
+    : url.includes("/git/workspace-repos")
+      ? { repos: [] }
+    : url.includes("/insights")
             ? { insights: [], count: 0 }
             : url.includes("/evals")
               ? { results: [] }
@@ -130,7 +136,6 @@ if (surface === "task-detail-title-app-floating" || surface === "board-card-clic
 const detailProps = {
   task: fixtureTask,
   initialTab: "definition" as const,
-  onMoveTask: async () => fixtureTask,
   onDeleteTask: async () => fixtureTask,
   onMergeTask: async () => ({ success: true } as never),
   onOpenDetail: () => undefined,
@@ -178,7 +183,7 @@ function TaskDetailTitleListHarness() {
 function TaskDetailTitleDockHarness() {
   localStorage.setItem("fusion:right-dock-open", "true");
   localStorage.setItem("fusion:right-dock-view", "tasks");
-  const dock = useRightDockController({ active: true, projectId: "fixture", tasks: [fixtureTask], addToast: noop, settingsLoaded: true, researchReadinessVersion: 0, workflowSteps: [], subscribePluginEvents: () => noop, openDetailTask: noop, openTaskPopup: noop, openMobileTasksInPopup: false, openFileInBrowser: noop, onMoveTask: asyncTask, onDeleteTask: asyncTask, onMergeTask: asyncMerge, openSettings: noop, onSendSelectionToTask: noop, onCreateTaskFromInsight: noop, onNavigateToMission: noop, onTaskCreated: noop, prAuthAvailable: false, autoMerge: true, taskDetailChatFirst: false, visibilityOptions: {}, footerVisible: false, columnFlagsByTaskId: fixtureColumnFlagsByTaskId });
+  const dock = useRightDockController({ active: true, projectId: "fixture", tasks: [fixtureTask], addToast: noop, settingsLoaded: true, researchReadinessVersion: 0, workflowSteps: [], subscribePluginEvents: () => noop, openDetailTask: noop, openTaskPopup: noop, openMobileTasksInPopup: false, openFileInBrowser: noop, onDeleteTask: asyncTask, onMergeTask: asyncMerge, openSettings: noop, onSendSelectionToTask: noop, onCreateTaskFromInsight: noop, onNavigateToMission: noop, onTaskCreated: noop, prAuthAvailable: false, autoMerge: true, taskDetailChatFirst: false, visibilityOptions: {}, footerVisible: false, columnFlagsByTaskId: fixtureColumnFlagsByTaskId });
   React.useEffect(() => { dock.openTaskInDock(fixtureTask); }, []);
   return <div data-testid="title-host-dock" className="fn-8806-constrained-title-host">{dock.dock}</div>;
 }

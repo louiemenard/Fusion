@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import type { SetStateAction } from "react";
 import {
   fetchChatSessions,
@@ -7,6 +8,7 @@ import {
   fetchChatMessages,
   updateChatSession,
   deleteChatSession,
+  backfillChatSessionToStash,
   attachChatStream,
   streamChatResponse,
   cancelChatResponse,
@@ -16,6 +18,7 @@ import {
   deleteChatTag as apiDeleteChatTag,
   type ChatFailureInfo,
   type ChatSessionListResponse,
+  type ChatStashBackfillResponse,
   type ChatStreamErrorMeta,
 } from "../api";
 import { subscribeSse } from "../sse-bus";
@@ -141,8 +144,14 @@ export interface UseChatReturn {
 
   // Session operations
   selectSession: (id: string, sessionOverride?: ChatSessionInfo) => void;
+  /**
+   * FNXC:ChatWindows 2026-08-23-04:29:
+   * A modifier-click opens a new conversation par dessus the current host without interrupting an
+   * in-flight reply. `keepActiveSession` inserts the session but deliberately avoids selecting it.
+   */
   createSession: (
     input: { agentId: string; title?: string; modelProvider?: string; modelId?: string; thinkingLevel?: string },
+    options?: { keepActiveSession?: boolean },
   ) => Promise<ChatSessionInfo>;
   archiveSession: (id: string) => Promise<void>;
   archivedSessions: ChatSessionInfo[];
@@ -164,6 +173,12 @@ export interface UseChatReturn {
    */
   setSessionThinkingLevel: (id: string, level: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
+  /**
+   * RUFU-136: "Preserve to Stash" — backfills this chat session's transcript into
+   * the project's Stash memory (POST /api/chat/sessions/:id/backfill-stash).
+   * Client-side idempotent (e2bf0cd52): re-invoking returns the existing capture.
+   */
+  backfillStashSession: (id: string) => Promise<ChatStashBackfillResponse>;
   createTag: (name: string) => Promise<ChatTag>;
   renameTag: (id: string, name: string) => Promise<void>;
   deleteTag: (id: string) => Promise<void>;
@@ -426,6 +441,7 @@ export function useChat(
   addToast?: (msg: string, type?: "success" | "error" | "warning") => void,
   options: UseChatOptions = {},
 ): UseChatReturn {
+  const { t } = useTranslation("app");
   const persistActiveSession = options.persistActiveSession !== false;
   const initialSession = options.initialSession;
   // Note: We use i18n lazy - the t function is only used for fallback messages
@@ -463,7 +479,7 @@ export function useChat(
   // Session state
   const [sessions, setSessions] = useState<ChatSessionInfo[]>(() => readCachedSessions(projectId));
   const [archivedSessions, setArchivedSessions] = useState<ChatSessionInfo[]>([]);
-  const [activeSession, setActiveSession] = useState<ChatSessionInfo | null>(null);
+  const [activeSession, setActiveSession] = useState<ChatSessionInfo | null>(() => initialSession ?? null);
   const [sessionsLoading, setSessionsLoading] = useState(() => readCachedSessions(projectId).length === 0);
   const [tags, setTags] = useState<ChatTag[]>([]);
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
@@ -519,7 +535,7 @@ export function useChat(
 
   // Refs for SSE event handlers to access current state
   const sessionsRef = useRef(sessions);
-  const activeSessionRef = useRef(activeSession);
+  const activeSessionRef = useRef<ChatSessionInfo | null>(initialSession ?? null);
   const messagesRef = useRef(messages);
   const isStreamingRef = useRef(isStreaming);
   const pendingReplacementRef = useRef<{ sessionId: string; messageId: string } | null>(null);
@@ -637,6 +653,10 @@ export function useChat(
   // Restore active session from localStorage after initial load.
   // Uses refs to avoid circular dependency with selectSession and to avoid
   // re-selecting/resetting the thread on every sessions refresh.
+  /*
+  FNXC:ChatWindows 2026-08-27-09:09:
+  FN-193 gives a dedicated pop-out an authoritative initial session before the session-list request finishes. Seeded state paints that thread immediately, then this one-time restore still calls selectSession with the override so messages and the authoritative session snapshot load without waiting for the list.
+  */
   const selectSessionRef = useRef<(id: string, sessionOverride?: ChatSessionInfo) => void>(() => {
     /* noop - will be replaced after selectSession is defined */
   });
@@ -648,7 +668,7 @@ export function useChat(
   }, [projectId]);
 
   useEffect(() => {
-    if (sessionsLoading || hasRestoredActiveSessionRef.current || activeSessionRef.current) return;
+    if (hasRestoredActiveSessionRef.current) return;
 
     /*
     FNXC:ChatWindows 2026-08-21-18:24:
@@ -660,6 +680,8 @@ export function useChat(
       selectSessionRef.current(initialSession.id, initialSession);
       return;
     }
+
+    if (sessionsLoading || activeSessionRef.current) return;
 
     if (!persistActiveSession) {
       hasRestoredActiveSessionRef.current = true;
@@ -1225,15 +1247,18 @@ export function useChat(
 
   // Create a new session
   const createSession = useCallback(
-    async (input: { agentId: string; title?: string; modelProvider?: string; modelId?: string; thinkingLevel?: string }) => {
+    async (
+      input: { agentId: string; title?: string; modelProvider?: string; modelId?: string; thinkingLevel?: string },
+      options?: { keepActiveSession?: boolean },
+    ) => {
       const previousSessionId = activeSessionRef.current?.id;
       const data = await apiCreateChatSession(input, projectId);
 
-      if (streamRef.current) {
+      if (!options?.keepActiveSession && streamRef.current) {
         streamRef.current.close();
         streamRef.current = null;
       }
-      lastAttachedGenerationRef.current = null;
+      if (!options?.keepActiveSession) lastAttachedGenerationRef.current = null;
       const newSession: ChatSessionInfo = {
         id: data.session.id,
         title: data.session.title,
@@ -1252,9 +1277,11 @@ export function useChat(
         return sortChatSessions([newSession, ...prev]);
       });
 
-      removePersistedPendingChatMessages(previousSessionId);
-      resetTransientComposerState();
-      selectSession(newSession.id, newSession);
+      if (!options?.keepActiveSession) {
+        removePersistedPendingChatMessages(previousSessionId);
+        resetTransientComposerState();
+        selectSession(newSession.id, newSession);
+      }
 
       return newSession;
     },
@@ -1492,6 +1519,17 @@ export function useChat(
       }
     },
     [activeSession, getChatMessagesCacheKey, projectId],
+  );
+
+  /*
+  FNXC:ChatStashBackfill 2026-08-19-16:28:
+  (operator request 2026-08-19) Backfill a chat's full history into Stash on demand.
+  Thin passthrough — the route owns the gating (Stash backend + API key) and the
+  upload; the hook adds nothing beyond the project scoping.
+  */
+  const backfillStashSession = useCallback(
+    (id: string) => backfillChatSessionToStash(id, projectId),
+    [projectId],
   );
 
   // Load more messages (pagination — use before cursor for oldest displayed message)
@@ -1754,8 +1792,32 @@ export function useChat(
           ));
           setActiveSession((prev) => prev && prev.id === sessionId ? { ...prev, ...nextModel } : prev);
         },
-        onDone: ({ messageId, message: finalMessage, accumulated }) => {
+        onAgentMessage: ({ message }) => {
           if (!ownsStream()) return;
+          const agentMessage = mapChatMessageToInfo(message);
+          streamingMessageIdsRef.current.add(agentMessage.id);
+          setMessages((previous) => appendChatMessageChronologically(previous, agentMessage));
+          setStreamingText("");
+          setStreamingThinking("");
+          setStreamingToolCalls([]);
+          setTimeout(() => streamingMessageIdsRef.current.delete(agentMessage.id), 1000);
+        },
+        onDone: ({ messageId, message: finalMessage, dispatch, failedAgentNames, accumulated }) => {
+          if (!ownsStream()) return;
+          if (dispatch === "agents") {
+            setStreamingText("");
+            setStreamingThinking("");
+            setStreamingToolCalls([]);
+            setIsStreaming(false);
+            isStreamingRef.current = false;
+            streamRef.current = null;
+            lastAttachedGenerationRef.current = null;
+            callbacks?.onDelivered?.();
+            if (failedAgentNames?.length) addToast?.(t("chat.agentRepliesFailed", { agents: failedAgentNames.join(", ") }), "warning");
+            refreshSessions();
+            flushPendingMessage();
+            return;
+          }
           const assistantMessage: ChatMessageInfo = finalMessage
             ? {
                 ...mapChatMessageToInfo(finalMessage),
@@ -2456,6 +2518,7 @@ export function useChat(
     setSessionModel,
     setSessionThinkingLevel,
     deleteSession,
+    backfillStashSession,
     createTag,
     renameTag,
     deleteTag,

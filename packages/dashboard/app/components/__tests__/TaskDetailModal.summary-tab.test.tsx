@@ -113,7 +113,6 @@ function detailModal(task: Task | TaskDetail, initialTab?: "recommendations") {
       task={task}
       initialTab={initialTab}
       onClose={noop}
-      onMoveTask={noopMove}
       onDeleteTask={noopDelete}
       onMergeTask={noopMerge}
       onOpenDetail={noopOpenDetail}
@@ -128,7 +127,6 @@ describe("TaskDetailModal Summary tab", () => {
       <TaskDetailModal
         task={doneTask()}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -166,7 +164,6 @@ describe("TaskDetailModal Summary tab", () => {
         task={doneTask()}
         initialTab="chat"
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -184,7 +181,6 @@ describe("TaskDetailModal Summary tab", () => {
         task={doneTask()}
         initialTab="changes"
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -200,7 +196,6 @@ describe("TaskDetailModal Summary tab", () => {
         task={doneTask({ enabledWorkflowSteps: ["WS-1"] })}
         initialTab="workflow"
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -217,7 +212,6 @@ describe("TaskDetailModal Summary tab", () => {
         <TaskDetailModal
           task={makeTask({ column })}
           onClose={noop}
-          onMoveTask={noopMove}
           onDeleteTask={noopDelete}
           onMergeTask={noopMerge}
           onOpenDetail={noopOpenDetail}
@@ -365,7 +359,6 @@ describe("TaskDetailModal Summary tab", () => {
       task,
       embedded: true,
       initialTab: "recommendations" as const,
-      onMoveTask: noopMove,
       onDeleteTask: noopDelete,
       onMergeTask: noopMerge,
       onOpenDetail: noopOpenDetail,
@@ -393,7 +386,6 @@ describe("TaskDetailModal Summary tab", () => {
       task,
       embedded: true,
       initialTab: "recommendations" as const,
-      onMoveTask: noopMove,
       onDeleteTask: noopDelete,
       onMergeTask: noopMerge,
       onOpenDetail: noopOpenDetail,
@@ -706,7 +698,6 @@ describe("TaskDetailModal Summary tab", () => {
       <TaskDetailContent
         task={task}
         initialTab="summary"
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -722,7 +713,6 @@ describe("TaskDetailModal Summary tab", () => {
         task={task}
         embedded
         initialTab="summary"
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -737,8 +727,10 @@ describe("TaskDetailModal Summary tab", () => {
     const css = readDashboardStylesSource();
     const tokenTableRule = css.match(/\.task-summary-token-table\s*\{[^}]*\}/)?.[0] ?? "";
     const modelNameRule = css.match(/\.task-summary-model-label span:last-child\s*\{[^}]*\}/)?.[0] ?? "";
-    const tokenTableSectionStart = css.lastIndexOf("FNXC:TaskDetailSummaryTokenCost");
-    const tokenTableSectionEnd = css.indexOf("/* Spec tab layout", tokenTableSectionStart);
+    const tokenTableSectionStart = css.indexOf(".task-summary-token-table-wrap {");
+    const tokenTableSectionEnd = css.indexOf(".detail-section--spec {", tokenTableSectionStart);
+    expect(tokenTableSectionStart).toBeGreaterThanOrEqual(0);
+    expect(tokenTableSectionEnd).toBeGreaterThan(tokenTableSectionStart);
     const tokenTableSection = css.slice(tokenTableSectionStart, tokenTableSectionEnd);
     const mobileTokenBlock = tokenTableSection.slice(tokenTableSection.indexOf("@media (max-width: 768px)"));
 
@@ -834,7 +826,6 @@ describe("TaskDetailModal Summary tab", () => {
         })}
         onClose={noop}
         initialTab="summary"
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -854,7 +845,6 @@ describe("TaskDetailModal Summary tab", () => {
       <TaskDetailModal
         task={doneTask()}
         onClose={noop}
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -873,7 +863,6 @@ describe("TaskDetailModal Summary tab", () => {
       <TaskDetailContent
         task={doneTask()}
         embedded
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -892,7 +881,6 @@ describe("TaskDetailModal Summary tab", () => {
         task={doneTask({ recommendations: [] })}
         embedded
         initialTab="recommendations"
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
@@ -908,7 +896,6 @@ describe("TaskDetailModal Summary tab", () => {
         task={doneTask({ recommendations: [{ id: "REC-embedded", title: "Embedded recommendation", description: "", category: "bug" }] })}
         embedded
         initialTab="recommendations"
-        onMoveTask={noopMove}
         onDeleteTask={noopDelete}
         onMergeTask={noopMerge}
         onOpenDetail={noopOpenDetail}
