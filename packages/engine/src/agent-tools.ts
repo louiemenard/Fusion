@@ -26,6 +26,7 @@ import type { AgentReflectionService } from "./agents/agent-reflection.js";
 import { createLogger } from "./logger.js";
 // FNXC:PlanArtifactPersistence 2026-07-26-03:55: PROMPT.md is filesystem-only; mirror plan writes into the DB.
 import { mirrorPlanToProjectDb } from "./plan-artifact-writeback.js";
+import { isPlanningLifecycleLockTransportError } from "./planning-handoff-recovery.js";
 import { fetchWebContent, WebFetchError } from "./util/web-fetch.js";
 import type { RunAuditor } from "./util/run-audit.js";
 import { computeApprovalDedupeKey } from "./agents/agent-action-gate.js";
@@ -6818,6 +6819,8 @@ export function createAcquireRepoWorktreeTool(opts: {
           isError: true,
         };
       }
+      // FNXC:PlanningLifecycleLock 2026-08-23-07:00: active-worktree registration is idempotent and must precede the later planning-locked scope mutation, so a retryable transport error cannot hide a successful acquisition.
+      onAcquired?.(result.worktreePath);
       /*
       FNXC:WorkspaceLateAcquire 2026-08-24-06:11:
       Register the acquired path FIRST. Everything below is bookkeeping — scope extension, audit,
@@ -6846,6 +6849,19 @@ export function createAcquireRepoWorktreeTool(opts: {
             actor: runContext?.agentId ?? "executor",
           });
         } catch (scopeError) {
+          /*
+          FNXC:WorkspaceLateAcquire 2026-08-29-23:50:
+          A transport-level lock failure is reported to the caller as retryable (origin/main's
+          contract); every other scope-write failure is logged and left to the next acquire.
+          Neither path unwinds the acquisition — the checkout may already be in use by a live
+          session, so aborting here would strand it.
+          */
+          if (isPlanningLifecycleLockTransportError(scopeError)) {
+            return {
+              content: [{ type: "text" as const, text: "Worktree was acquired but repository-scope persistence is temporarily unavailable; retry fn_acquire_repo_worktree shortly." }],
+              details: {}, isError: true,
+            };
+          }
           // The checkout exists; a failed intent write is logged and retried by the next acquire
           // (this block is skipped once the scope lists the repository) rather than aborting.
           logger?.warn(`${task.id}: acquired ${repo} but recording the repository-scope extension failed: ${scopeError instanceof Error ? scopeError.message : String(scopeError)}`);
@@ -6913,7 +6929,6 @@ export function createAcquireRepoWorktreeTool(opts: {
       // the alreadyAcquired path, so skipping onAcquired left the sub-repo path unregistered
       // in-memory and conflict/liveness checks missed it. Set.add is idempotent, so re-firing
       // on a fresh acquire is a harmless no-op.
-      onAcquired?.(result.worktreePath);
       await store.logEntry(
         task.id,
         result.alreadyAcquired
